@@ -1,0 +1,7 @@
+{
+  "name": "textboi-extension",
+  "private": true,
+  "scripts": {
+    "build": "echo \"No build needed (pure JS)\""
+  }
+}

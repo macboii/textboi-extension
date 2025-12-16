@@ -1,0 +1,7 @@
+#textboi-bubble {
+  transition: transform 0.12s ease, opacity 0.12s ease;
+}
+
+#textboi-bubble:hover {
+  transform: scale(1.05);
+}
