@@ -1,11 +1,12 @@
 // ======================================================
-// TextBoi – Universal Content Script (NO modules)
+// TextBoi – Full Refactor Content Script
 // Works on: Web / Gmail / Google Docs / Slides
 // ======================================================
 
 /* ------------------------------------------------------
    Utils
 ------------------------------------------------------ */
+
 function isGoogleDocsLike() {
   return (
     location.hostname.includes("docs.google.com") ||
@@ -18,28 +19,28 @@ function isGmailDomain() {
   return h.includes("mail.google.com") || h.includes("inbox.google.com");
 }
 
-// ShadowRoot 내부 selection 추출
 function getDeepActiveSelection() {
   let el = document.activeElement;
-
   while (el && el.shadowRoot && el.shadowRoot.activeElement) {
     el = el.shadowRoot.activeElement;
   }
-
-  if (el && (el.isContentEditable || el.tagName === "TEXTAREA" || el.tagName === "INPUT")) {
+  if (
+    el &&
+    (el.isContentEditable ||
+      el.tagName === "TEXTAREA" ||
+      el.tagName === "INPUT")
+  ) {
     try {
       const sel = el.ownerDocument.getSelection();
       if (sel && sel.toString().trim()) return sel.toString().trim();
 
-      if (el.value && el.selectionStart !== el.selectionEnd) {
+      if (el.value && el.selectionStart !== el.selectionEnd)
         return el.value.substring(el.selectionStart, el.selectionEnd);
-      }
     } catch {}
   }
   return "";
 }
 
-// Gmail/iframe selection 추출
 function getIframeSelection() {
   for (const frame of document.querySelectorAll("iframe")) {
     try {
@@ -50,7 +51,6 @@ function getIframeSelection() {
   return "";
 }
 
-// Gmail iframe selection rect
 function getIframeSelectionRect() {
   for (const frame of document.querySelectorAll("iframe")) {
     try {
@@ -65,18 +65,13 @@ function getIframeSelectionRect() {
         top: rect.top + iframeRect.top,
         bottom: rect.bottom + iframeRect.top,
         left: rect.left + iframeRect.left,
-        right: rect.right + iframeRect.left,
-        width: rect.width,
-        height: rect.height,
+        right: rect.right + iframeRect.left
       };
     } catch {}
   }
   return null;
 }
 
-/* ------------------------------------------------------
-   Unified Selection
------------------------------------------------------- */
 async function getSelectedTextUnified() {
   const sel = window.getSelection();
   if (sel && sel.toString().trim()) return sel.toString().trim();
@@ -87,374 +82,328 @@ async function getSelectedTextUnified() {
   const iframeSel = getIframeSelection();
   if (iframeSel) return iframeSel;
 
-  try {
-    await new Promise((r) => setTimeout(r, 40));
-    const clipText = await navigator.clipboard.readText();
-    if (clipText?.trim()) return clipText.trim();
-  } catch {}
-
   return "";
 }
 
 /* ------------------------------------------------------
    Overlay UI
 ------------------------------------------------------ */
-let overlayEl = null;
-let inputEl = null;
-let resultEl = null;
-let pendingResult = null;
 
-function showOverlay(selectedText) {
-  removeOverlay();
+let overlayEl = null, inputEl = null, resultEl = null, pendingResult = null;
 
-  overlayEl = document.createElement("div");
-  overlayEl.id = "textboi-overlay";
+const Overlay = {
+  show(text) {
+    Overlay.remove();
 
-  Object.assign(overlayEl.style, {
-    position: "fixed",
-    top: "0",
-    right: "0",
-    width: "420px",
-    height: "100vh",
-    background: "#fff",
-    zIndex: "2147483647",
-    boxShadow: "-4px 0 16px rgba(0,0,0,0.18)",
-    display: "flex",
-    flexDirection: "column",
-    padding: "12px",
-    fontFamily: "system-ui, -apple-system, BlinkMacSystemFont",
-  });
+    overlayEl = document.createElement("div");
+    Object.assign(overlayEl.style, {
+      position: "fixed",
+      top: 0,
+      right: 0,
+      width: "420px",
+      height: "100vh",
+      background: "#fff",
+      zIndex: 2147483647,
+      boxShadow: "-4px 0 16px rgba(0,0,0,0.18)",
+      display: "flex",
+      flexDirection: "column",
+      padding: "12px"
+    });
 
-  inputEl = document.createElement("textarea");
-  inputEl.value = selectedText;
-  inputEl.style.height = "120px";
-  inputEl.style.resize = "vertical";
+    inputEl = document.createElement("textarea");
+    inputEl.value = text;
+    inputEl.style.height = "120px";
 
-  resultEl = document.createElement("div");
-  resultEl.textContent = "번역 중...";
-  resultEl.style.marginTop = "12px";
-  resultEl.style.whiteSpace = "pre-wrap";
+    resultEl = document.createElement("div");
+    resultEl.textContent = "번역 중...";
+    resultEl.style.marginTop = "12px";
 
-  overlayEl.append(inputEl, resultEl);
-  document.body.appendChild(overlayEl);
+    overlayEl.append(inputEl, resultEl);
+    document.body.appendChild(overlayEl);
 
-  if (pendingResult) {
-    updateResult(pendingResult);
-    pendingResult = null;
+    if (pendingResult) {
+      Overlay.update(pendingResult);
+      pendingResult = null;
+    }
+  },
+
+  update(payload) {
+    if (!overlayEl || !resultEl) {
+      pendingResult = payload;
+      return;
+    }
+    if (payload.error) {
+      resultEl.textContent = payload.message || "오류 발생";
+      return;
+    }
+    resultEl.textContent =
+      payload.text ??
+      payload.result ??
+      JSON.stringify(payload, null, 2);
+  },
+
+  remove() {
+    overlayEl?.remove();
+    overlayEl = null;
+    inputEl = null;
+    resultEl = null;
   }
-}
-
-function updateResult(payload) {
-  if (!overlayEl || !resultEl) {
-    pendingResult = payload;
-    return;
-  }
-
-  if (payload?.error) {
-    resultEl.textContent = payload.message || "오류가 발생했습니다.";
-    return;
-  }
-
-  resultEl.textContent =
-    payload?.text ??
-    payload?.result ??
-    JSON.stringify(payload, null, 2);
-}
-
-function removeOverlay() {
-  overlayEl?.remove();
-  overlayEl = null;
-  inputEl = null;
-  resultEl = null;
-  pendingResult = null;
-}
+};
 
 /* ------------------------------------------------------
    Bubble UI
 ------------------------------------------------------ */
+
 let bubbleEl = null;
 
-function showBubble(rect) {
-  removeBubble();
+const Bubble = {
+  show(rect) {
+    Bubble.remove();
 
-  bubbleEl = document.createElement("div");
-  bubbleEl.id = "textboi-bubble";
-  bubbleEl.textContent = "✨ TextBoi";
+    bubbleEl = document.createElement("div");
+    bubbleEl.textContent = "✨ TextBoi";
 
-  const bubbleWidth = 90;
-  const margin = 8;
+    const w = 90, m = 8;
+    let top = rect.bottom + m;
+    let left = rect.right - w;
+    left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
 
-  let top = rect.bottom + margin;
-  let left = rect.right - bubbleWidth;
-
-  left = Math.max(8, Math.min(left, window.innerWidth - bubbleWidth - 8));
-  top = Math.min(top, window.innerHeight - 40);
-
-  Object.assign(bubbleEl.style, {
-    position: "fixed",
-    top: `${top}px`,
-    left: `${left}px`,
-    padding: "6px 10px",
-    fontSize: "12px",
-    background: "#111",
-    color: "#fff",
-    borderRadius: "999px",
-    cursor: "pointer",
-    zIndex: "2147483647",
-    userSelect: "none",
-    boxShadow: "0 4px 12px rgba(0,0,0,0.25)",
-  });
-
-  document.body.appendChild(bubbleEl);
-
-  registerBubbleHandlers(bubbleEl);
-}
-
-function removeBubble() {
-  bubbleEl?.remove();
-  bubbleEl = null;
-}
-
-/* ------------------------------------------------------
-   Bubble Handlers (Platform-specific)
------------------------------------------------------- */
-
-let gmailSelectionCache = "";
-
-function registerBubbleHandlers(bubble) {
-  let handled = false;
-
-  /* -----------------------------------------
-     ① Gmail 전용 핸들러 (mousedown)
-  ----------------------------------------- */
-  bubble.addEventListener("click", (e) => {
-    if (!isGmailDomain()) return;
-
-    e.preventDefault();
-    e.stopPropagation();
-
-    if (!gmailSelectionCache) {
-      removeBubble();
-      return;
-    }
-
-    showOverlay(gmailSelectionCache);
-
-    chrome.runtime.sendMessage({
-      type: "PROCESS_TEXT",
-      mode: "translate",
-      text: gmailSelectionCache,
+    Object.assign(bubbleEl.style, {
+      position: "fixed",
+      top: `${top}px`,
+      left: `${left}px`,
+      padding: "6px 10px",
+      fontSize: "12px",
+      background: "#111",
+      color: "#fff",
+      borderRadius: "999px",
+      cursor: "pointer",
+      zIndex: 2147483647,
+      boxShadow: "0 4px 12px rgba(0,0,0,0.25)",
+      userSelect: "none",
+      webkitUserSelect: "none",
+      MozUserSelect: "none",
+      pointerEvents: "auto"
     });
 
-    removeBubble();
-  });
+    document.body.appendChild(bubbleEl);
+  },
 
-  /* -----------------------------------------
-     ② Google Docs / Slides 전용 핸들러
-     (mousedown에서 selection 살아있음)
-  ----------------------------------------- */
-  bubble.addEventListener("mousedown", async (e) => {
-    if (!isGoogleDocsLike()) return;
-
-    if (handled) return;
-    handled = true;
-
-    e.preventDefault();
-    e.stopPropagation();
-
-    const text = await getSelectedTextUnified();
-    if (!text) {
-      removeBubble();
-      return;
-    }
-
-    showOverlay(text);
-
-    chrome.runtime.sendMessage({
-      type: "PROCESS_TEXT",
-      mode: "translate",
-      text,
-    });
-
-    removeBubble();
-  });
-
-  /* -----------------------------------------
-     ③ 일반 웹 전용 click 핸들러
-  ----------------------------------------- */
-  bubble.addEventListener("click", async (e) => {
-    if (isGoogleDocsLike() || isGmailDomain()) return; // Gmail/Docs는 click 금지
-
-    if (handled) return;
-    handled = true;
-
-    e.preventDefault();
-    e.stopPropagation();
-
-    document.execCommand("copy");
-    await new Promise((r) => setTimeout(r, 30));
-
-    const text = await getSelectedTextUnified();
-    if (!text) return removeBubble();
-
-    showOverlay(text);
-
-    chrome.runtime.sendMessage({
-      type: "PROCESS_TEXT",
-      mode: "translate",
-      text,
-    });
-
-    removeBubble();
-  });
-}
-
-/* ------------------------------------------------------
-   Selection Detection
------------------------------------------------------- */
-
-let lastSelectionText = "";
-let debounceTimer = null;
-
-document.addEventListener("selectionchange", () => {
-  if (isGoogleDocsLike()) return;
-
-  let text = "";
-
-  if (isGmailDomain()) {
-    text = getIframeSelection();
-    if (text?.trim()) gmailSelectionCache = text.trim();
-  } else {
-    const sel = window.getSelection();
-    if (!sel || sel.isCollapsed) {
-      removeBubble();
-      lastSelectionText = "";
-      return;
-    }
-    text = sel.toString().trim();
+  remove() {
+    bubbleEl?.remove();
+    bubbleEl = null;
   }
+};
 
-  if (!text || text === lastSelectionText) return;
-  lastSelectionText = text;
 
-  clearTimeout(debounceTimer);
-  debounceTimer = setTimeout(() => {
-    let rect = null;
+/* ------------------------------------------------------
+   MODULE 1: Web
+------------------------------------------------------ */
 
-    if (isGmailDomain()) {
-      rect = getIframeSelectionRect();
-    } else {
+const WebModule = {
+  lastText: "",
+  dragging: false,
+  mouseDown: false,
+
+  init() {
+    document.addEventListener("mousedown", () => {
+      WebModule.mouseDown = true;
+      WebModule.dragging = false;
+      WebModule.lastText = "";
+      Bubble.remove();
+    });
+
+    document.addEventListener("mousemove", () => {
+      if (WebModule.mouseDown) WebModule.dragging = true;
+    });
+
+    document.addEventListener("mouseup", () => {
+      WebModule.mouseDown = false;
+
       const sel = window.getSelection();
-      rect = sel.getRangeAt(0).getBoundingClientRect();
-    }
+      const text = sel?.toString()?.trim() ?? "";
+      if (!text) return Bubble.remove();
 
-    if (!rect || rect.width === 0 || rect.height === 0) return;
+      WebModule.lastText = text;
 
-    showBubble(rect);
-  }, 120);
-});
+      let rect;
+      try {
+        rect = sel.getRangeAt(0).getBoundingClientRect();
+      } catch {
+        return;
+      }
+      if (!rect.width || !rect.height) return;
 
-/* ------------------------------------------------------
-   Google Docs Drag Detection
------------------------------------------------------- */
-let lastMousePos = { x: 0, y: 0 };
-let isMouseDown = false;
-let dragDistance = 0;
-let startPos = { x: 0, y: 0 };
+      Bubble.show(rect);
 
-document.addEventListener(
-  "mousedown",
-  (e) => {
-    if (!isGoogleDocsLike()) return;
-    isMouseDown = true;
+      bubbleEl.onmousedown = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
 
-    dragDistance = 0;
-    startPos = { x: e.clientX, y: e.clientY };
-  },
-  true
-);
+        Overlay.show(WebModule.lastText);
 
-document.addEventListener(
-  "mousemove",
-  (e) => {
-    lastMousePos = { x: e.clientX, y: e.clientY };
+        chrome.runtime.sendMessage({
+          type: "PROCESS_TEXT",
+          mode: "translate",
+          text: WebModule.lastText
+        });
 
-    if (!isGoogleDocsLike() || !isMouseDown) return;
-
-    dragDistance = Math.sqrt(
-      (e.clientX - startPos.x) ** 2 +
-      (e.clientY - startPos.y) ** 2
-    );
-  },
-  true
-);
-
-document.addEventListener(
-  "mouseup",
-  async () => {
-    if (!isGoogleDocsLike()) return;
-
-    isMouseDown = false;
-
-    if (dragDistance < 6) {
-      removeBubble();
-      return;
-    }
-
-    const text = await getSelectedTextUnified();
-    if (!text) return removeBubble();
-
-    showBubble({
-      top: lastMousePos.y,
-      bottom: lastMousePos.y,
-      left: lastMousePos.x,
-      right: lastMousePos.x,
+        Bubble.remove();
+      };
     });
-  },
-  true
-);
+  }
+};
 
 /* ------------------------------------------------------
-   Messages (Hotkey Trigger)
+   MODULE 2: Gmail (FINAL REAL FIX)
 ------------------------------------------------------ */
+const GmailModule = {
+  lastText: "",
+  dragging: false,
+  mouseDown: false,
+
+  init() {
+    document.addEventListener("mousedown", () => {
+      WebModule.mouseDown = true;
+      WebModule.dragging = false;
+      WebModule.lastText = "";
+      Bubble.remove();
+    });
+
+    document.addEventListener("mousemove", () => {
+      if (WebModule.mouseDown) WebModule.dragging = true;
+    });
+
+    document.addEventListener("mouseup", () => {
+      WebModule.mouseDown = false;
+
+      const sel = window.getSelection();
+      const text = sel?.toString()?.trim() ?? "";
+      if (!text) return Bubble.remove();
+
+      WebModule.lastText = text;
+
+      let rect;
+      try {
+        rect = sel.getRangeAt(0).getBoundingClientRect();
+      } catch {
+        return;
+      }
+      if (!rect.width || !rect.height) return;
+
+      Bubble.show(rect);
+
+      bubbleEl.onmousedown = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        Overlay.show(WebModule.lastText);
+
+        chrome.runtime.sendMessage({
+          type: "PROCESS_TEXT",
+          mode: "translate",
+          text: WebModule.lastText
+        });
+
+        Bubble.remove();
+      };
+    });
+  }
+};
+
+
+
+
+/* ------------------------------------------------------
+   MODULE 3: Google Docs / Slides
+------------------------------------------------------ */
+
+const DocsModule = {
+  lastMousePos: { x: 0, y: 0 },
+  isMouseDown: false,
+  dragDistance: 0,
+  startPos: { x: 0, y: 0 },
+
+  init() {
+    document.addEventListener("mousedown", (e) => {
+      DocsModule.isMouseDown = true;
+      DocsModule.dragDistance = 0;
+      DocsModule.startPos = { x: e.clientX, y: e.clientY };
+    }, true);
+
+    document.addEventListener("mousemove", (e) => {
+      DocsModule.lastMousePos = { x: e.clientX, y: e.clientY };
+      if (!DocsModule.isMouseDown) return;
+
+      DocsModule.dragDistance = Math.sqrt(
+        (e.clientX - DocsModule.startPos.x) ** 2 +
+        (e.clientY - DocsModule.startPos.y) ** 2
+      );
+    }, true);
+
+    document.addEventListener("mouseup", async () => {
+      DocsModule.isMouseDown = false;
+
+      if (DocsModule.dragDistance < 6) return Bubble.remove();
+
+      const text = await getSelectedTextUnified();
+      if (!text) return Bubble.remove();
+
+      Bubble.show({
+        top: DocsModule.lastMousePos.y,
+        bottom: DocsModule.lastMousePos.y,
+        left: DocsModule.lastMousePos.x,
+        right: DocsModule.lastMousePos.x
+      });
+
+      bubbleEl.onmousedown = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        Overlay.show(text);
+
+        chrome.runtime.sendMessage({
+          type: "PROCESS_TEXT",
+          mode: "translate",
+          text
+        });
+
+        Bubble.remove();
+      };
+    }, true);
+  }
+};
+
+
+/* ------------------------------------------------------
+   Router
+------------------------------------------------------ */
+
+if (isGoogleDocsLike()) {
+  DocsModule.init();
+} else if (isGmailDomain()) {
+  GmailModule.init();
+} else {
+  WebModule.init();
+}
+
+
+/* ------------------------------------------------------
+   Hotkey + Result Handling
+------------------------------------------------------ */
+
 chrome.runtime.onMessage.addListener((msg) => {
-  if (msg?.type === "SHOW_RESULT") updateResult(msg.payload);
-
-  if (msg?.type === "COMMAND") {
-    showBubble({
-      top: lastMousePos.y,
-      bottom: lastMousePos.y,
-      left: lastMousePos.x,
-      right: lastMousePos.x,
-    });
-  }
-});
-
-/* ------------------------------------------------------
-   ESC key closes everything
------------------------------------------------------- */
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") {
-    removeBubble();
-    removeOverlay();
-  }
+  if (msg.type === "SHOW_RESULT") Overlay.update(msg.payload);
 });
 
 
-/* ------------------------------------------------------
-   Gmail mouseup → 버블 표시 (핵심)
------------------------------------------------------- */
-document.addEventListener("mouseup", () => {
-  if (!isGmailDomain()) return;
-
-  const text = getIframeSelection();
-  if (!text?.trim()) {
-    removeBubble();
-    return;
-  }
-
-  gmailSelectionCache = text.trim();
-
-  const rect = getIframeSelectionRect();
-  if (rect) showBubble(rect);
-});
+function findGmailEditorIframe() {
+  // Gmail compose iframe 추적
+  return (
+    document.querySelector('iframe[tabindex="1"]') || 
+    document.querySelector('iframe.editable') ||
+    document.querySelector('iframe.Am.Al') ||
+    document.querySelector('iframe[allowfullscreen]') ||
+    null
+  );
+}
