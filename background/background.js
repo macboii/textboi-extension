@@ -1,44 +1,75 @@
-//background.js
+// background/background.js
 
 import { callTextBoiAPI } from "../utils/api.js";
 import { getAccessToken } from "../utils/auth.js";
 
-/* 단축키 */
+/* =========================
+   단축키 처리
+========================= */
 chrome.commands.onCommand.addListener(async (command) => {
-  const [tab] = await chrome.tabs.query({
-    active: true,
-    currentWindow: true
-  });
+  try {
+    const [tab] = await chrome.tabs.query({
+      active: true,
+      currentWindow: true
+    });
 
-  if (!tab?.id) return;
+    if (!tab?.id) return;
 
-  chrome.tabs.sendMessage(tab.id, {
-    type: "COMMAND",
-    mode: command
-  });
+    // content script에게 실행 신호만 전달
+    chrome.tabs.sendMessage(tab.id, {
+      type: "COMMAND",
+      mode: command
+    });
+  } catch (err) {
+    console.error("[TextBoi] Command handling failed", err);
+  }
 });
 
-/* bubble / content → API 처리 */
+/* =========================
+   Content → API 처리
+========================= */
 chrome.runtime.onMessage.addListener((msg, sender) => {
-  if (msg.type !== "PROCESS_TEXT") return;
+  if (msg?.type !== "PROCESS_TEXT") return;
 
   (async () => {
-    const token = await getAccessToken();
-    const result = await callTextBoiAPI(
-      { mode: msg.mode, text: msg.text },
-      token
-    );
+    try {
+      const token = await getAccessToken();
 
-    if (!sender.tab?.id) return;
+      const result = await callTextBoiAPI(
+        {
+          mode: msg.mode,
+          text: msg.text
+        },
+        token
+      );
 
-    chrome.tabs.sendMessage(sender.tab.id, {
-      type: "SHOW_RESULT",
-      payload: result
-    });
+      if (!sender.tab?.id) return;
+
+      chrome.tabs.sendMessage(sender.tab.id, {
+        type: "SHOW_RESULT",
+        payload: result
+      });
+    } catch (err) {
+      console.error("[TextBoi] PROCESS_TEXT failed", err);
+
+      if (sender.tab?.id) {
+        chrome.tabs.sendMessage(sender.tab.id, {
+          type: "SHOW_RESULT",
+          payload: {
+            error: true,
+            message: "Translation failed"
+          }
+        });
+      }
+    }
   })();
+
+  return true; // 🔥 MV3 비동기 응답 필수
 });
 
-/* 우클릭 메뉴 생성 */
+/* =========================
+   우클릭 메뉴 생성
+========================= */
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
     id: "textboi-translate",
@@ -47,8 +78,10 @@ chrome.runtime.onInstalled.addListener(() => {
   });
 });
 
-/* 우클릭 → PROCESS_TEXT만 */
-chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+/* =========================
+   우클릭 → 번역 실행
+========================= */
+chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId !== "textboi-translate") return;
   if (!tab?.id || !info.selectionText) return;
 
