@@ -7,6 +7,10 @@
    Utils
 ------------------------------------------------------ */
 
+let lastSelectionRange = null;
+let lastGmailRange = null;
+
+
 function isGoogleDocsLike() {
   return (
     location.hostname.includes("docs.google.com") ||
@@ -110,15 +114,65 @@ const Overlay = {
       padding: "12px"
     });
 
+    // textarea
     inputEl = document.createElement("textarea");
     inputEl.value = text;
     inputEl.style.height = "120px";
 
+    // 번역 결과
     resultEl = document.createElement("div");
     resultEl.textContent = "번역 중...";
     resultEl.style.marginTop = "12px";
 
-    overlayEl.append(inputEl, resultEl);
+    // 👇 추가되는 부분 — 변형 텍스트 박스
+    let appendBox = document.createElement("div");
+    appendBox.style.marginTop = "12px";
+    appendBox.style.padding = "10px";
+    appendBox.style.background = "#f3f3f3";
+    appendBox.style.borderRadius = "8px";
+    appendBox.style.whiteSpace = "pre-wrap";
+    appendBox.style.fontSize = "13px";
+    appendBox.style.color = "#333";
+    appendBox.textContent = text + " 1@3$5^7*9)success";
+
+
+    /* -------------------------------
+       Replace 버튼 (웹 전용)
+    -------------------------------- */
+    const replaceBtn = document.createElement("button");
+    replaceBtn.textContent = "Replace Selected Text";
+    Object.assign(replaceBtn.style, {
+      marginTop: "16px",
+      padding: "10px 12px",
+      background: "#007aff",
+      color: "#fff",
+      border: "none",
+      borderRadius: "6px",
+      cursor: "pointer",
+      fontSize: "14px"
+    });
+
+    // 웹 전용 Replace 활성화
+    replaceBtn.onclick = () => {
+      const newText = appendBox.textContent;
+
+      if (isGoogleDocsLike()) {
+        alert("Google Docs / Slides는 Replace가 제한됩니다.");
+        return;
+      }
+
+      if (isGmailDomain()) {
+        replaceSelectedTextInWebandGmail(newText);
+        return;
+      }
+
+      // 기본 웹
+      replaceSelectedTextInWebandGmail(newText);
+    };
+
+
+    overlayEl.append(inputEl, resultEl, appendBox, replaceBtn);
+
     document.body.appendChild(overlayEl);
 
     if (pendingResult) {
@@ -126,6 +180,7 @@ const Overlay = {
       pendingResult = null;
     }
   },
+
 
   update(payload) {
     if (!overlayEl || !resultEl) {
@@ -224,6 +279,11 @@ const WebModule = {
       const text = sel?.toString()?.trim() ?? "";
       if (!text) return Bubble.remove();
 
+      // 🔥 Range 저장
+      if (sel.rangeCount > 0) {
+        lastSelectionRange = sel.getRangeAt(0).cloneRange();
+      }
+
       WebModule.lastText = text;
 
       let rect;
@@ -281,6 +341,11 @@ const GmailModule = {
       const text = sel?.toString()?.trim() ?? "";
       if (!text) return Bubble.remove();
 
+
+      // 🔥 Range 저장
+      if (sel.rangeCount > 0) {
+        lastSelectionRange = sel.getRangeAt(0).cloneRange();
+      }
       WebModule.lastText = text;
 
       let rect;
@@ -407,3 +472,88 @@ function findGmailEditorIframe() {
     null
   );
 }
+
+
+/* ------------------------------------------------------
+   Replace Function (Web + Gmail 동일 처리)
+------------------------------------------------------ */
+function replaceSelectedTextInWebandGmail(newText) {
+
+  // 🔥 저장된 Range가 없으면 치환 불가능
+  if (!lastSelectionRange) {
+    alert("선택된 텍스트 범위를 찾을 수 없습니다.");
+    return;
+  }
+
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(lastSelectionRange);
+
+  let range = sel.getRangeAt(0);
+
+  // 기존 선택 내용 삭제
+  range.deleteContents();
+
+  // 새 텍스트 삽입
+  const textNode = document.createTextNode(newText);
+  range.insertNode(textNode);
+
+  // 🔥 커서 위치를 삽입된 텍스트 뒤로 이동
+  sel.removeAllRanges();
+  const newRange = document.createRange();
+  newRange.setStartAfter(textNode);
+  newRange.collapse(true);
+  sel.addRange(newRange);
+
+  console.log("Replaced:", newText);
+}
+
+
+
+// /* ------------------------------------------------------
+//    Gmail Replace Function (iframe 내부 치환)
+// ------------------------------------------------------ */
+// function replaceSelectedTextInGmail(newText) {
+//   // Gmail iframe 찾기
+//   const iframe =
+//     document.querySelector('iframe.Am.Al') || // 일반 Gmail 작성기
+//     document.querySelector('iframe[tabindex="1"]') ||
+//     document.querySelector("iframe.editable");
+
+//   if (!iframe) {
+//     alert("Gmail 편집 영역을 찾을 수 없습니다.");
+//     return;
+//   }
+
+//   let sel, range;
+
+//   try {
+//     sel = iframe.contentWindow.getSelection();
+//     if (!sel || sel.rangeCount === 0) {
+//       alert("Gmail에서 선택된 텍스트가 없습니다.");
+//       return;
+//     }
+
+//     range = sel.getRangeAt(0);
+//   } catch (e) {
+//     console.error("Gmail selection error:", e);
+//     alert("Gmail 텍스트를 변경할 수 없습니다.");
+//     return;
+//   }
+
+//   // 기존 내용 삭제
+//   range.deleteContents();
+
+//   // 새 텍스트 삽입
+//   const textNode = iframe.contentWindow.document.createTextNode(newText);
+//   range.insertNode(textNode);
+
+//   // 커서를 텍스트 뒤로 이동
+//   sel.removeAllRanges();
+//   const newRange = iframe.contentWindow.document.createRange();
+//   newRange.setStartAfter(textNode);
+//   newRange.collapse(true);
+//   sel.addRange(newRange);
+
+//   console.log("Gmail text replaced:", newText);
+// }
