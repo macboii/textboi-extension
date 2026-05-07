@@ -1,31 +1,32 @@
-# SidePanel UI 리디자인 계획
+# SidePanel UI 리디자인 — 이력 및 현재 구조
 
-데스크탑 앱(`textBoi_desktop/`) 디자인을 기준으로 Chrome 익스텐션 SidePanel을 재설계한다.  
-구현 전 이 문서를 읽고 모든 섹션을 완전히 이해할 것.
+> **UI 전체 명세는 [`.claude/rules/ui-spec.md`](ui-spec.md)를 참조할 것.**  
+> 이 문서는 리디자인 이력, _position() 전략, 미완료 작업만 다룬다.
 
 ---
 
-## 1. 목표 레이아웃 (데스크탑 대응 구조)
+## 1. 현재 구현된 레이아웃
 
 ```
-┌─────────────────────────────────────┐
-│  [交 Translate] [A Correct]    [✕]  │  ← tb-header (모드 토글 + 닫기)
-│  [Model: GPT-4o mini ▾]             │  ← tb-model-row (모델 셀렉터 full-width)
-├─────────────────────────────────────┤
-│  🌐 Auto-detect                     │  ← tb-section--top (소스 lang 뱃지)
-│  ┌─────────────────────────────┐    │
-│  │ selected text appears here  │    │  ← tb-original textarea
-│  └─────────────────────────────┘    │
-├ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┤
-│  [🇺🇸 English ▾]   ← TRANSLATE 모드  │  ← tb-section--bottom
-│  [🔍 Proofread ▾]  ← CORRECT 모드   │    (target-lang 또는 rewrite-style 셀렉트)
-│  ┌─────────────────────────────┐    │
-│  │ AI result streams here...   │    │  ← tb-result (+ tb-spinner)
-│  └─────────────────────────────┘    │
-│  [Custom prompt... (optional)]      │  ← CORRECT 모드 한정 (tb-custom-prompt)
-├─────────────────────────────────────┤
-│  [↺]              [Apply ⌘↵]       │  ← tb-footer
-└─────────────────────────────────────┘
+┌─────────────────────────────────────────┐
+│  [● Model ▾]                     [✕]   │  ← .tb-model-row (최상단)
+├─────────────────────────────────────────┤
+│  [交 번역하기]  [A 문장교정]            │  ← .tb-header
+├─────────────────────────────────────────┤
+│  🌐 Auto-detect                         │  ← .tb-section--top
+│  ┌───────────────────────────────────┐  │
+│  │ Selected text appears here...     │  │  ← .tb-original
+│  └───────────────────────────────────┘  │
+├ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┤  (구분선, 좌우 20px 여백)
+│  [한국어 ▾]  (TRANSLATE) /              │  ← .tb-section--bottom
+│  [🔧 개선 ▾] (CORRECT)                  │
+│  ┌───────────────────────────────────┐  │
+│  │ AI 결과 or 빈 상태 단축키 가이드   │  │  ← .tb-result + .tb-empty-guide
+│  └───────────────────────────────────┘  │
+│  [Custom prompt] (CORRECT 한정)         │  ← .tb-custom-prompt-wrap
+├─────────────────────────────────────────┤
+│  [↺]                      [Apply ⌘↵]   │  ← .tb-footer
+└─────────────────────────────────────────┘
 ```
 
 ---
@@ -414,24 +415,32 @@ if (!settings.targetLang) {
 
 ## 9. 구현 순서 (체크리스트)
 
-- [ ] `utils/constants.js` — `REWRITE_TYPES` 배열 추가
-- [ ] `utils/storage.js` — `getSettings()` 기본 targetLang 로케일 기반 결정
-- [ ] `content/content.js` — `SidePanel._buildHTML()` 새 구조로 교체
-- [ ] `content/content.js` — `SidePanel._switchMode()` 메서드 추가
-- [ ] `content/content.js` — `SidePanel._populateSelects()` 업데이트
-- [ ] `content/content.js` — `SidePanel._bindEvents()` 업데이트
+- [x] `utils/constants.js` — `REWRITE_TYPES` 배열 추가
+- [x] `utils/storage.js` — `getSettings()` 기본 targetLang 로케일 기반 결정
+- [x] `content/content.js` — `SidePanel._buildHTML()` 새 구조로 교체
+- [x] `content/content.js` — `SidePanel._switchMode()` 메서드 추가
+- [x] `content/content.js` — `SidePanel._populateSelects()` 업데이트
+- [x] `content/content.js` — `SidePanel._bindEvents()` 업데이트
   - 모드 버튼: `_switchMode` 호출 추가
-  - `.tb-model-select` change 핸들러 (기존 모델 select 로직 유지)
-  - `.tb-target-lang-select` change 핸들러 (기존 lang select 로직 유지, selector명 변경)
+  - `.tb-model-select` change 핸들러
+  - `.tb-target-lang-select` change 핸들러
   - `.tb-rewrite-select` change 핸들러 (REWRITE_TYPES에서 prompt 찾아 saveSettings)
   - `.tb-custom-prompt` input 핸들러 (값이 있으면 custom prompt 우선 적용)
-- [ ] `content/styles.css` — 디자인 토큰 CSS 변수 블록 추가
-- [ ] `content/styles.css` — 새 컴포넌트 스타일 추가, 기존 구식 스타일 정리
-- [ ] `npm run build` 후 익스텐션 리로드하여 동작 확인
-  - [ ] Translate 모드: target lang select 표시, rewrite select 숨김
-  - [ ] Correct 모드: rewrite select 표시, custom prompt 표시, target lang 숨김
-  - [ ] 모드 전환 시 UI 즉시 교체 + 재실행
-  - [ ] 다크 모드 (OS 설정) 색상 정상 적용
+- [x] `content/styles.css` — 새 컴포넌트 스타일 추가, 기존 구식 스타일 정리
+- [x] `npm run build` 후 익스텐션 리로드하여 동작 확인
+  - [x] Translate 모드: target lang select 표시, rewrite select 숨김
+  - [x] Correct 모드: rewrite select 표시, custom prompt 표시, target lang 숨김
+  - [x] 모드 전환 시 UI 즉시 교체
+  - [x] 다크 모드 (OS 설정) 색상 정상 적용
+
+**_position() 최종 전략** (선택 기준 배치 → 뷰포트 중앙 고정으로 변경):
+```javascript
+// W: 522px, margin: 24px, 항상 뷰포트 중앙 수직 정렬, 오른쪽 24px 여백
+const panelH = Math.min(930, Math.max(755, vh - margin * 2));
+const top = Math.max(margin, (vh - panelH) / 2);
+const left = vw - W - margin;
+// el.style.height = panelH + 'px'; — JS에서 명시적으로 높이 지정
+```
 
 ---
 

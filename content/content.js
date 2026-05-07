@@ -8,6 +8,7 @@ import { DOUBLE_COPY_THRESHOLD_MS, MODELS, LANGUAGES, REWRITE_TYPES } from "../u
 let lastSelectionRange = null;
 let lastSelectionRect = null;
 let lastCopyAt = 0;
+let _activeDropdown = null;
 
 // ═══════════════════════════════════════════════════════
 // 사이트 감지
@@ -97,6 +98,164 @@ function saveSelectionRange() {
       }
     } catch {}
   }
+}
+
+// ═══════════════════════════════════════════════════════
+// Dropdown helpers
+// ═══════════════════════════════════════════════════════
+
+function closeActiveDropdown() {
+  if (_activeDropdown) {
+    _activeDropdown.el.remove();
+    document.removeEventListener("mousedown", _activeDropdown.outside, true);
+    document.removeEventListener("keydown", _activeDropdown.keydown, true);
+    _activeDropdown = null;
+  }
+}
+
+function openDropdown(triggerBtn, panelEl, width = 260) {
+  closeActiveDropdown();
+
+  panelEl.className = "tb-dd-panel";
+  document.body.appendChild(panelEl);
+
+  const rect = triggerBtn.getBoundingClientRect();
+  let left = rect.left;
+  let top = rect.bottom + 4;
+
+  if (left + width > window.innerWidth - 8) left = window.innerWidth - width - 8;
+
+  const maxH = 320;
+  if (top + maxH > window.innerHeight - 8) {
+    panelEl.style.cssText += "transform:translateY(-100%) !important;";
+    top = rect.top - 4;
+  }
+
+  Object.assign(panelEl.style, {
+    position: "fixed",
+    top: `${Math.max(8, top)}px`,
+    left: `${Math.max(8, left)}px`,
+    width: `${width}px`,
+    zIndex: "2147483648",
+  });
+
+  const outside = (e) => {
+    if (!panelEl.contains(e.target) && !triggerBtn.contains(e.target)) {
+      closeActiveDropdown();
+    }
+  };
+  const keydown = (e) => {
+    if (e.key === "Escape") { e.stopPropagation(); closeActiveDropdown(); }
+  };
+  document.addEventListener("mousedown", outside, true);
+  document.addEventListener("keydown", keydown, true);
+  _activeDropdown = { el: panelEl, outside, keydown };
+
+  panelEl.querySelector(".tb-dd-search")?.focus();
+}
+
+function buildLangDropdown(langs, currentCode, onSelect) {
+  const panel = document.createElement("div");
+  panel.innerHTML = `
+    <div class="tb-dd-search-wrap">
+      <input class="tb-dd-search" type="text" placeholder="언어 검색..." autocomplete="off" spellcheck="false" />
+    </div>
+    <div class="tb-dd-list"></div>
+  `;
+
+  const searchInput = panel.querySelector(".tb-dd-search");
+  const list = panel.querySelector(".tb-dd-list");
+
+  function renderList(filter) {
+    const q = filter.toLowerCase();
+    const filtered = q
+      ? langs.filter(l => l.label.toLowerCase().includes(q) || l.code.toLowerCase().includes(q))
+      : langs;
+    list.innerHTML = "";
+    if (filtered.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "tb-dd-empty";
+      empty.textContent = "결과 없음";
+      list.appendChild(empty);
+      return;
+    }
+    filtered.forEach(lang => {
+      const item = document.createElement("div");
+      item.className = "tb-dd-item" + (lang.code === currentCode ? " tb-dd-item--selected" : "");
+      item.textContent = lang.label;
+      item.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        onSelect(lang.code, lang.label);
+        closeActiveDropdown();
+      });
+      list.appendChild(item);
+    });
+  }
+
+  renderList("");
+  searchInput.addEventListener("input", () => renderList(searchInput.value.trim()));
+  return panel;
+}
+
+function buildRewriteDropdown(types, currentId, onSelect) {
+  const panel = document.createElement("div");
+  panel.innerHTML = `
+    <div class="tb-dd-search-wrap">
+      <input class="tb-dd-search" type="text" placeholder="검색 또는 사용자 지정 프롬프트 + Enter" autocomplete="off" spellcheck="false" />
+    </div>
+    <div class="tb-dd-list"></div>
+  `;
+
+  const searchInput = panel.querySelector(".tb-dd-search");
+  const list = panel.querySelector(".tb-dd-list");
+
+  function renderList(filter) {
+    const q = filter.toLowerCase();
+    const filtered = q
+      ? types.filter(t =>
+          t.label.toLowerCase().includes(q) ||
+          (t.description || "").toLowerCase().includes(q)
+        )
+      : types;
+    list.innerHTML = "";
+    if (filtered.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "tb-dd-empty";
+      empty.textContent = "결과 없음";
+      list.appendChild(empty);
+      return;
+    }
+    filtered.forEach(type => {
+      const item = document.createElement("div");
+      item.className = "tb-dd-item tb-dd-item--rich" + (type.id === currentId ? " tb-dd-item--selected" : "");
+      const labelEl = document.createElement("div");
+      labelEl.className = "tb-dd-item-label";
+      labelEl.textContent = type.label;
+      item.appendChild(labelEl);
+      if (type.description) {
+        const descEl = document.createElement("div");
+        descEl.className = "tb-dd-item-desc";
+        descEl.textContent = type.description;
+        item.appendChild(descEl);
+      }
+      item.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        onSelect(type.id, type.label, type.prompt);
+        closeActiveDropdown();
+      });
+      list.appendChild(item);
+    });
+  }
+
+  renderList("");
+  searchInput.addEventListener("input", () => renderList(searchInput.value.trim()));
+  searchInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      const custom = searchInput.value.trim();
+      if (custom) { e.preventDefault(); onSelect(null, "✏️ Custom", custom); closeActiveDropdown(); }
+    }
+  });
+  return panel;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -193,33 +352,16 @@ const SidePanel = {
   },
 
   _position() {
-    const W = 380, margin = 16;
+    const W = 522, margin = 24;
     const vw = window.innerWidth, vh = window.innerHeight;
-    const rect = lastSelectionRect;
-
-    // 항상 우측 고정
+    const panelH = Math.min(930, Math.max(755, vh - margin * 2));
     const left = vw - W - margin;
-
-    let top;
-    if (rect && (rect.top || rect.bottom)) {
-      // 선택 영역 기준 수직 정렬 (아래 공간 있으면 아래, 없으면 위)
-      const panelH = Math.min(560, vh - margin * 2);
-      const spaceBelow = vh - rect.bottom - margin;
-      if (spaceBelow >= panelH) {
-        top = rect.bottom + margin;
-      } else if (rect.top - margin >= panelH) {
-        top = rect.top - panelH - margin;
-      } else {
-        // 화면 중앙
-        top = Math.max(margin, (vh - panelH) / 2);
-      }
-    } else {
-      top = Math.max(margin, (vh - 500) / 2);
-    }
+    const top = Math.max(margin, (vh - panelH) / 2);
 
     Object.assign(this.el.style, {
-      top: `${Math.max(margin, Math.min(top, vh - margin - 200))}px`,
+      top: `${top}px`,
       left: `${Math.max(margin, left)}px`,
+      height: `${panelH}px`,
     });
   },
 
@@ -229,6 +371,7 @@ const SidePanel = {
     this.currentResult += chunk;
     const resultEl = this.el.querySelector(".tb-result");
     if (resultEl) resultEl.textContent = this.currentResult;
+    this.el.querySelector(".tb-empty-guide")?.remove();
   },
 
   setDone(result) {
@@ -239,6 +382,7 @@ const SidePanel = {
     if (resultEl) resultEl.textContent = result;
     this.el.querySelector(".tb-replace-btn")?.removeAttribute("disabled");
     this.el.querySelector(".tb-spinner")?.remove();
+    this.el.querySelector(".tb-empty-guide")?.remove();
   },
 
   setError(message) {
@@ -271,6 +415,7 @@ const SidePanel = {
   },
 
   remove() {
+    closeActiveDropdown();
     if (this.el) {
       this.el.classList.remove("tb-panel--open");
       const el = this.el;
@@ -286,14 +431,18 @@ const SidePanel = {
     const modelOptions = MODELS.map(
       (m) => `<option value="${m.id}">${m.label}</option>`
     ).join("");
-    const langOptions = LANGUAGES.map(
-      (l) => `<option value="${l.code}">${l.label}</option>`
-    ).join("");
-    const rewriteOptions = REWRITE_TYPES.map(
-      (r) => `<option value="${r.id}">${r.label}</option>`
-    ).join("");
+
+    const isMac = navigator.platform.includes("Mac");
+    const mod = isMac ? "⌘" : "Ctrl";
 
     return `
+      <div class="tb-model-row">
+        <div class="tb-model-selector">
+          <span class="tb-model-dot"></span>
+          <select class="tb-model-select">${modelOptions}</select>
+        </div>
+        <button class="tb-close-btn" aria-label="Close">✕</button>
+      </div>
       <div class="tb-header">
         <div class="tb-mode-btns">
           <button class="tb-mode-btn tb-mode-btn--active" data-mode="translate">
@@ -303,34 +452,37 @@ const SidePanel = {
             <span class="tb-mode-icon">A✓</span> Correct
           </button>
         </div>
-        <button class="tb-close-btn" aria-label="Close">✕</button>
-      </div>
-      <div class="tb-model-row">
-        <select class="tb-model-select">${modelOptions}</select>
       </div>
       <div class="tb-guest-banner" style="display:none"></div>
       <div class="tb-section tb-section--top">
         <div class="tb-section-bar">
-          <span class="tb-lang-badge">🌐 Auto-detect</span>
+          <button class="tb-source-lang-btn tb-lang-trigger">🌐 Auto-detect ▾</button>
         </div>
         <div class="tb-text-box">
-          <textarea class="tb-original" placeholder="Selected text appears here..." rows="4"></textarea>
+          <textarea class="tb-original" placeholder="Selected text appears here..."></textarea>
         </div>
       </div>
       <div class="tb-divider"></div>
       <div class="tb-section tb-section--bottom">
         <div class="tb-section-bar">
-          <select class="tb-target-lang-select tb-translate-only">${langOptions}</select>
-          <select class="tb-rewrite-select tb-correct-only" style="display:none">${rewriteOptions}</select>
+          <button class="tb-target-lang-btn tb-lang-trigger tb-translate-only">— ▾</button>
+          <button class="tb-rewrite-btn tb-lang-trigger tb-correct-only" style="display:none">— ▾</button>
         </div>
         <div class="tb-text-box">
           <div class="tb-result-wrap">
             <div class="tb-spinner"></div>
             <div class="tb-result"></div>
+            <div class="tb-empty-guide">
+              <div class="tb-empty-shortcut">
+                <span class="tb-kbd">${mod}</span><span class="tb-kbd">C+C</span>
+                <span class="tb-empty-desc">선택한 텍스트 두 번 복사로 불러오기</span>
+              </div>
+              <div class="tb-empty-shortcut">
+                <span class="tb-kbd">${mod}</span><span class="tb-kbd">↵</span>
+                <span class="tb-empty-desc">결과를 원문에 바로 적용</span>
+              </div>
+            </div>
           </div>
-        </div>
-        <div class="tb-custom-prompt-wrap tb-correct-only" style="display:none">
-          <textarea class="tb-custom-prompt" placeholder="Custom instruction (optional)..." rows="2"></textarea>
         </div>
       </div>
       <div class="tb-footer">
@@ -340,26 +492,43 @@ const SidePanel = {
     `;
   },
 
-  _populateSelects(settings) {
-    const targetLangSel = this.el.querySelector(".tb-target-lang-select");
-    const modelSel = this.el.querySelector(".tb-model-select");
-    const rewriteSel = this.el.querySelector(".tb-rewrite-select");
+  _updateModelDot(modelId) {
+    const dot = this.el?.querySelector(".tb-model-dot");
+    if (!dot) return;
+    const colors = {
+      "gpt-4o-mini":       "#FFD60A",
+      "gpt-4.1-mini":      "#30D158",
+      "gpt-4.1":           "#0A84FF",
+      "gpt-5-chat-latest": "#BF5AF2",
+    };
+    dot.style.background = colors[modelId] || "#636366";
+  },
 
-    if (targetLangSel) targetLangSel.value = settings.targetLang;
-    if (modelSel) modelSel.value = settings.model;
-    if (rewriteSel) {
-      // Backward compat: rewritePrompt may be old id ("proofread") or full prompt text
-      const matchedByPrompt = REWRITE_TYPES.find(r => r.prompt === settings.rewritePrompt);
-      const matchedById = REWRITE_TYPES.find(r => r.id === settings.rewritePrompt);
-      rewriteSel.value = matchedByPrompt?.id || matchedById?.id || "proofread";
+  _populateSelects(settings) {
+    const modelSel = this.el.querySelector(".tb-model-select");
+    if (modelSel) {
+      modelSel.value = settings.model;
+      this._updateModelDot(settings.model);
     }
 
-    // 모드 버튼 active 상태 반영
+    const targetLangBtn = this.el.querySelector(".tb-target-lang-btn");
+    if (targetLangBtn) {
+      const lang = LANGUAGES.find(l => l.code === settings.targetLang);
+      targetLangBtn.textContent = (lang?.label || settings.targetLang) + " ▾";
+    }
+
+    const rewriteBtn = this.el.querySelector(".tb-rewrite-btn");
+    if (rewriteBtn) {
+      const matchedByPrompt = REWRITE_TYPES.find(r => r.prompt === settings.rewritePrompt);
+      const matchedById = REWRITE_TYPES.find(r => r.id === settings.rewritePrompt);
+      const type = matchedByPrompt || matchedById || REWRITE_TYPES[0];
+      rewriteBtn.textContent = type.label + " ▾";
+    }
+
     this.el.querySelectorAll(".tb-mode-btn").forEach((btn) => {
       btn.classList.toggle("tb-mode-btn--active", btn.dataset.mode === settings.mode);
     });
 
-    // translate-only / correct-only 요소 표시
     this._switchMode(settings.mode);
   },
 
@@ -374,13 +543,12 @@ const SidePanel = {
   },
 
   _bindEvents(settings) {
-    // 닫기
     this.el.querySelector(".tb-close-btn").addEventListener("click", () => this.remove());
 
-    // 모드 버튼 전환
     this.el.querySelectorAll(".tb-mode-btn").forEach((btn) => {
       btn.addEventListener("click", async () => {
         if (btn.dataset.mode === settings.mode) return;
+        closeActiveDropdown();
         this.el.querySelectorAll(".tb-mode-btn").forEach((b) => b.classList.remove("tb-mode-btn--active"));
         btn.classList.add("tb-mode-btn--active");
         settings.mode = btn.dataset.mode;
@@ -390,52 +558,55 @@ const SidePanel = {
       });
     });
 
-    // 대상 언어 변경 (translate 모드)
-    this.el.querySelector(".tb-target-lang-select").addEventListener("change", async (e) => {
-      settings.targetLang = e.target.value;
-      await saveSettings({ targetLang: e.target.value });
+    // Source language dropdown
+    this.el.querySelector(".tb-source-lang-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      const btn = e.currentTarget;
+      const panelEl = buildLangDropdown(LANGUAGES, null, (code, label) => {
+        btn.textContent = label + " ▾";
+      });
+      openDropdown(btn, panelEl, 240);
     });
 
-    // 교정 스타일 변경 (correct 모드)
-    this.el.querySelector(".tb-rewrite-select").addEventListener("change", async (e) => {
-      const found = REWRITE_TYPES.find(r => r.id === e.target.value);
-      const customVal = this.el.querySelector(".tb-custom-prompt")?.value?.trim();
-      const prompt = customVal || found?.prompt || "";
-      settings.rewritePrompt = prompt;
-      await saveSettings({ rewritePrompt: prompt });
+    // Target language dropdown
+    this.el.querySelector(".tb-target-lang-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      const btn = e.currentTarget;
+      const panelEl = buildLangDropdown(LANGUAGES, settings.targetLang, async (code, label) => {
+        settings.targetLang = code;
+        btn.textContent = label + " ▾";
+        await saveSettings({ targetLang: code });
+      });
+      openDropdown(btn, panelEl, 240);
     });
 
-    // 커스텀 프롬프트 — input 시 메모리 업데이트, blur 시 저장
-    const customPromptEl = this.el.querySelector(".tb-custom-prompt");
-    customPromptEl.addEventListener("input", (e) => {
-      const customVal = e.target.value.trim();
-      if (customVal) {
-        settings.rewritePrompt = customVal;
-      } else {
-        const id = this.el.querySelector(".tb-rewrite-select")?.value || "proofread";
-        const found = REWRITE_TYPES.find(r => r.id === id);
-        settings.rewritePrompt = found?.prompt || "";
-      }
-    });
-    customPromptEl.addEventListener("blur", async () => {
-      await saveSettings({ rewritePrompt: settings.rewritePrompt });
+    // Rewrite style dropdown
+    this.el.querySelector(".tb-rewrite-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      const btn = e.currentTarget;
+      const matchedByPrompt = REWRITE_TYPES.find(r => r.prompt === settings.rewritePrompt);
+      const matchedById = REWRITE_TYPES.find(r => r.id === settings.rewritePrompt);
+      const currentId = (matchedByPrompt || matchedById || REWRITE_TYPES[0]).id;
+      const panelEl = buildRewriteDropdown(REWRITE_TYPES, currentId, async (id, label, prompt) => {
+        settings.rewritePrompt = prompt;
+        btn.textContent = label + " ▾";
+        await saveSettings({ rewritePrompt: prompt });
+      });
+      openDropdown(btn, panelEl, 280);
     });
 
-    // 모델 변경
     this.el.querySelector(".tb-model-select").addEventListener("change", async (e) => {
       settings.model = e.target.value;
+      this._updateModelDot(e.target.value);
       await saveSettings({ model: e.target.value });
     });
 
-    // Replace 버튼
     this.el.querySelector(".tb-replace-btn").addEventListener("click", () => {
       if (this.state === "done") handleReplace(this.currentResult);
     });
 
-    // 재실행 버튼
     this.el.querySelector(".tb-retry-btn").addEventListener("click", () => this._rerun(settings));
 
-    // 원본 텍스트 Enter → 재실행 (Shift+Enter는 줄바꿈)
     this.el.querySelector(".tb-original").addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
@@ -447,18 +618,6 @@ const SidePanel = {
   _rerun(settings) {
     const text = this.el?.querySelector(".tb-original")?.value?.trim();
     if (!text || !isContextAlive()) return;
-
-    // correct 모드: 커스텀 프롬프트가 있으면 우선 사용
-    if (settings.mode === "correct") {
-      const customVal = this.el?.querySelector(".tb-custom-prompt")?.value?.trim();
-      if (customVal) {
-        settings.rewritePrompt = customVal;
-      } else {
-        const id = this.el?.querySelector(".tb-rewrite-select")?.value || "proofread";
-        const found = REWRITE_TYPES.find(r => r.id === id);
-        if (found) settings.rewritePrompt = found.prompt;
-      }
-    }
 
     this.state = "loading";
     this.currentResult = "";
@@ -593,21 +752,28 @@ const Bubble = {
 
     this.el = document.createElement("div");
     this.el.id = "textboi-bubble";
-    this.el.textContent = "✨ TextBoi";
 
-    const w = 90, m = 8;
-    const top = rect.bottom + m;
-    const left = Math.max(8, Math.min(rect.right - w, window.innerWidth - w - 8));
+    const iconUrl = chrome.runtime.getURL("icons/icon48.png");
+    const img = document.createElement("img");
+    img.src = iconUrl;
+    img.style.cssText = "width:100% !important; height:100% !important; object-fit:cover !important; border-radius:50% !important; display:block !important; pointer-events:none !important;";
+    this.el.appendChild(img);
+
+    const size = 36; // bubble diameter
+    // 선택 영역 우측 하단 바로 옆에 붙임
+    const top = rect.bottom - size / 2;
+    const left = Math.min(rect.right + 4, window.innerWidth - size - 8);
 
     Object.assign(this.el.style, {
-      top: `${top}px`,
-      left: `${left}px`,
+      top: `${Math.max(8, top)}px`,
+      left: `${Math.max(8, left)}px`,
     });
 
     this.el.addEventListener("mousedown", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      onDoubleCopy(text);
+      Bubble.remove();
+      SidePanel.show(text);
     });
 
     document.body.appendChild(this.el);
@@ -934,8 +1100,8 @@ if (isGoogleDocsLike()) {
 // ═══════════════════════════════════════════════════════
 
 document.addEventListener("keydown", (e) => {
-  // Esc: 모든 UI 닫기
   if (e.key === "Escape") {
+    if (_activeDropdown) { closeActiveDropdown(); return; }
     SidePanel.remove();
     MiniPopover.remove();
     Bubble.remove();

@@ -12,10 +12,11 @@ OCR 기능 없음. 데스크탑 앱(`textBoi_desktop/`)의 API, 텍스트 정제
 |------|------|
 | [`SPEC.md`](./SPEC.md) | 기능 상세 명세서 (트리거, UI, API, 사이트별 동작) |
 | [`DEV_PLAN.md`](./DEV_PLAN.md) | 세부 개발 계획 (단계별 태스크, 파일별 변경 내용) |
+| [`.claude/rules/ui-spec.md`](.claude/rules/ui-spec.md) | **UI 정의서** — 데스크탑 앱 스크린샷 기준 컴포넌트 명세, 구현 상태 체크리스트 |
 | [`.claude/rules/architecture.md`](.claude/rules/architecture.md) | 파일 역할 경계, 메시지 타입, 전역 상태 |
-| [`.claude/rules/content-script-patterns.md`](.claude/rules/content-script-patterns.md) | 이중 복사 감지, 사이트별 선택 처리, Replace 전략 |
+| [`.claude/rules/content-script-patterns.md`](.claude/rules/content-script-patterns.md) | 이중 복사 감지, 사이트별 선택 처리, Bubble 패턴 |
 | [`.claude/rules/replace-strategy.md`](.claude/rules/replace-strategy.md) | 환경별(Web/Gmail/Docs) 텍스트 치환 패턴 |
-| [`.claude/rules/ui-redesign-plan.md`](.claude/rules/ui-redesign-plan.md) | SidePanel UI 리디자인 계획 (데스크탑 앱 디자인 기준) |
+| [`.claude/rules/ui-redesign-plan.md`](.claude/rules/ui-redesign-plan.md) | SidePanel 리디자인 이력 및 _position() 전략 |
 
 ---
 
@@ -118,6 +119,11 @@ export const SUPABASE_REST_API_URL =
 
 URL·키 하드코딩 금지. 반드시 `utils/constants.js`에서 import.
 
+**모델 목록** (`utils/constants.js` `MODELS` 배열) — `textBoi_desktop/public/aiModels.json`과 동기화 유지:
+- `gpt-4o-mini` / `gpt-4.1-mini` / `gpt-4.1` / `gpt-5-chat-latest`
+
+**content script에서 아이콘 접근** — `manifest.json`의 `web_accessible_resources`에 `"icons/*.png"` 등록 필수. `chrome.runtime.getURL("icons/icon48.png")` 방식으로 사용.
+
 ---
 
 ## 사이트별 동작 분기
@@ -126,7 +132,7 @@ URL·키 하드코딩 금지. 반드시 `utils/constants.js`에서 import.
 |--------|--------|-----|-------------|
 | 일반 웹 | `copy` 이벤트 × 2 | Side Panel (우측 고정) | Range.deleteContents + insertNode |
 | Gmail | iframe copy 이벤트 × 2 (MutationObserver로 iframe 감지) | Side Panel | Range.deleteContents + insertNode |
-| Google Docs/Slides | iframe keydown Cmd+C × 2 + `navigator.clipboard.readText()` | Mini Popover (선택 근처) | sync execCommand('copy') → execCommand('paste') → ClipboardEvent fallback |
+| Google Docs/Slides | iframe keydown Cmd+C × 2 + `navigator.clipboard.readText()` | Side Panel (모든 환경 통일) | sync execCommand('copy') → execCommand('paste') → ClipboardEvent fallback |
 | Google Sheets | `copy` 이벤트 × 2 (DOM 기반, 일반 웹과 동일) | Side Panel | Range.deleteContents + insertNode |
 
 ---

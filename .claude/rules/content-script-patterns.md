@@ -197,20 +197,19 @@ document.addEventListener('keydown', (e) => {
 
 ## 스트리밍 수신 패턴 (content.js)
 
+모든 환경(Web/Gmail/Docs/Slides/Sheets)에서 SidePanel만 사용. MiniPopover 분기 없음.
+
 ```javascript
 chrome.runtime.onMessage.addListener((msg) => {
   switch (msg.type) {
     case 'STREAM_CHUNK':
-      if (isGoogleDocsLike()) MiniPopover.appendChunk(msg.chunk);
-      else SidePanel.appendChunk(msg.chunk);
+      SidePanel.appendChunk(msg.chunk);
       break;
     case 'STREAM_DONE':
-      if (isGoogleDocsLike()) MiniPopover.setDone(msg.result);
-      else SidePanel.setDone(msg.result);
+      SidePanel.setDone(msg.result);
       break;
     case 'STREAM_ERROR':
-      if (isGoogleDocsLike()) MiniPopover.setError(msg.message);
-      else SidePanel.setError(msg.message);
+      SidePanel.setError(msg.message);
       break;
     case 'GUEST_LIMIT_REACHED':
       SidePanel.showLoginPrompt(); // 로그인 유도 배너
@@ -222,12 +221,30 @@ chrome.runtime.onMessage.addListener((msg) => {
 });
 ```
 
+## Bubble 컴포넌트
+
+mouseup 후 선택 텍스트가 있으면 표시되는 원형 아이콘 버튼. 클릭 시 SidePanel을 열고 AI 처리를 시작한다.
+
+```javascript
+// 위치: 선택 영역 우측 끝에 수직 중앙으로 붙임
+const size = 36;
+const top = rect.bottom - size / 2;
+const left = Math.min(rect.right + 4, window.innerWidth - size - 8);
+
+// 아이콘: chrome.runtime.getURL('icons/icon48.png') — manifest.json에 web_accessible_resources 필수
+// 클릭: mousedown에서 e.preventDefault() + e.stopPropagation() 후 onDoubleCopy(text) 호출
+//       → SidePanel.show(text) + triggerProcessing(text)
+```
+
+**주의**: `document.addEventListener('mousedown', () => Bubble.remove())` 로 외부 클릭 시 제거되므로,
+버블 자체 mousedown에서 반드시 `e.stopPropagation()` 호출해야 버블 클릭이 작동한다.
+
 ## 사이트 감지 유틸
 
 ```javascript
 function isGoogleDocsLike() {
   // Google Sheets(/spreadsheets/)는 DOM 기반 → 일반 웹처럼 처리
-  // Docs(/document/)와 Slides(/presentation/)만 canvas 기반 → MiniPopover + clipboard paste
+  // Docs(/document/)와 Slides(/presentation/)만 canvas 기반 → clipboard paste 방식
   const path = location.pathname;
   if (location.hostname.includes('docs.google.com')) {
     return path.includes('/document/') || path.includes('/presentation/');
