@@ -354,7 +354,7 @@ const SidePanel = {
   _position() {
     const W = 522, margin = 24;
     const vw = window.innerWidth, vh = window.innerHeight;
-    const panelH = Math.min(930, Math.max(755, vh - margin * 2));
+    const panelH = Math.min(720, vh - margin * 2);
     const left = vw - W - margin;
     const top = Math.max(margin, (vh - panelH) / 2);
 
@@ -466,7 +466,7 @@ const SidePanel = {
       <div class="tb-section tb-section--bottom">
         <div class="tb-section-bar">
           <button class="tb-target-lang-btn tb-lang-trigger tb-translate-only">— ▾</button>
-          <button class="tb-rewrite-btn tb-lang-trigger tb-correct-only" style="display:none">— ▾</button>
+          <button class="tb-rewrite-btn tb-lang-trigger tb-correct-only tb-hidden">— ▾</button>
         </div>
         <div class="tb-text-box">
           <div class="tb-result-wrap">
@@ -535,10 +535,10 @@ const SidePanel = {
   _switchMode(mode) {
     const isCorrect = mode === "correct";
     this.el.querySelectorAll(".tb-translate-only").forEach(el => {
-      el.style.display = isCorrect ? "none" : "";
+      el.classList.toggle("tb-hidden", isCorrect);
     });
     this.el.querySelectorAll(".tb-correct-only").forEach(el => {
-      el.style.display = isCorrect ? "" : "none";
+      el.classList.toggle("tb-hidden", !isCorrect);
     });
   },
 

@@ -70,7 +70,7 @@
 .tb-header {
   display: flex !important;
   align-items: center !important;
-  padding: 12px 20px 14px !important;
+  padding: 16px 20px 18px !important;
   flex-shrink: 0 !important;
   background: #1C1C1E !important;
 }
@@ -104,8 +104,8 @@
   display: inline-flex !important;
   align-items: center !important;
   gap: 5px !important;
-  padding: 0 16px !important;
-  height: 36px !important;
+  height: 40px !important;
+  padding: 0 18px !important;
   font-size: 13px !important;
   font-weight: 600 !important;
   border: 1px solid #48484A !important;
@@ -136,7 +136,7 @@
   display: flex !important;
   align-items: center !important;
   gap: 10px !important;
-  padding: 16px 20px 12px !important;
+  padding: 18px 20px 16px !important;
   border-bottom: 1px solid rgba(255,255,255,0.07) !important;
   flex-shrink: 0 !important;
   background: #1C1C1E !important;
@@ -192,21 +192,25 @@
 
 /* ─── 섹션 공통 ─── */
 .tb-section {
-  flex: 1 !important;
+  flex: unset !important;
   display: flex !important;
   flex-direction: column !important;
   min-height: 0 !important;
-  padding: 0 20px !important;
+  padding-left: 20px !important;
+  padding-right: 20px !important;
 }
 
 .tb-section--top {
-  padding-top: 14px !important;
+  flex: 0 0 260px !important;
+  padding-top: 18px !important;
   padding-bottom: 14px !important;
 }
 
 .tb-section--bottom {
+  flex: 1 !important;
+  min-height: 0 !important;
   padding-top: 14px !important;
-  padding-bottom: 14px !important;
+  padding-bottom: 18px !important;
 }
 
 /* ─── 섹션 구분선 ─── */
@@ -217,37 +221,42 @@
   margin: 0 20px !important;
 }
 
+/* ─── visibility 강제 (호스트 CSS !important 방어) ─── */
+#textboi-panel .tb-hidden {
+  display: none !important;
+}
+
 /* ─── 섹션 상단 바 ─── */
 .tb-section-bar {
   display: flex !important;
   align-items: center !important;
-  justify-content: space-between !important;
-  padding: 0 0 10px !important;
+  padding: 0 0 14px !important;
 }
 
 /* ─── 언어/교정 트리거 버튼 ─── */
 .tb-lang-trigger {
   display: inline-flex !important;
   align-items: center !important;
-  gap: 3px !important;
-  font-size: 13px !important;
+  gap: 5px !important;
+  font-size: 12px !important;
   font-weight: 500 !important;
-  color: #0A84FF !important;
-  background: transparent !important;
-  border: none !important;
-  border-bottom: 1px solid #38383A !important;
-  border-radius: 0 !important;
-  padding: 2px 2px !important;
+  color: #AEAEB2 !important;
+  background: #2C2C2E !important;
+  border: 1px solid #48484A !important;
+  border-radius: 8px !important;
+  padding: 4px 10px !important;
   cursor: pointer !important;
   outline: none !important;
   white-space: nowrap !important;
   max-width: 220px !important;
   overflow: hidden !important;
   text-overflow: ellipsis !important;
-  transition: color 0.12s !important;
+  transition: background 0.12s, border-color 0.12s !important;
 }
 .tb-lang-trigger:hover {
-  color: #3B98FF !important;
+  background: #3A3A3C !important;
+  border-color: #58585A !important;
+  color: #F2F2F7 !important;
 }
 
 /* ─── 커스텀 드롭다운 패널 ─── */
@@ -343,55 +352,85 @@
 }
 
 /* ─── 텍스트 박스 (입력/결과 공통) ─── */
+/* ─── 텍스트 박스 ─── */
 .tb-text-box {
   flex: 1 !important;
+
   position: relative !important;
+
   background: #232325 !important;
   border: 1px solid rgba(255,255,255,0.09) !important;
-  border-radius: 12px !important;
+  border-radius: 14px !important;
+
   overflow: hidden !important;
+
   display: flex !important;
   flex-direction: column !important;
-  min-height: 100px !important;
+
+  min-height: 0 !important;
+
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.03),
+    inset 0 -1px 0 rgba(0,0,0,0.25) !important;
 }
 
-/* ─── 원본 텍스트 입력 ─── */
+/* ─── 원본 입력 ─── */
 .tb-original {
-  flex: 1 !important;
+  flex: unset !important;
+  height: 100% !important;
+
   width: 100% !important;
+
   background: transparent !important;
   border: none !important;
   outline: none !important;
   resize: none !important;
+
   font-size: 14px !important;
-  color: #AEAEB2 !important;
-  padding: 14px 16px !important;
-  line-height: 1.65 !important;
-  min-height: 100px !important;
+  color: #F2F2F7 !important;
+
+  padding: 20px 20px !important;
+
+  line-height: 1.7 !important;
+
+  min-height: 0 !important;
+
   display: block !important;
 }
+
 .tb-original::placeholder {
-  color: rgba(255,255,255,0.20) !important;
+  color: rgba(255,255,255,0.22) !important;
 }
 
 /* ─── 결과 영역 ─── */
+/* ─── 결과 영역 ─── */
 .tb-result-wrap {
   flex: 1 !important;
+
+  min-height: 0 !important;
+
   position: relative !important;
-  min-height: 100px !important;
+
   display: flex !important;
   flex-direction: column !important;
 }
 
 .tb-result {
   flex: 1 !important;
-  padding: 14px 16px !important;
+
+  padding: 20px 20px !important;
+
   font-size: 14px !important;
   color: #F2F2F7 !important;
+
   white-space: pre-wrap !important;
   word-break: break-word !important;
-  line-height: 1.65 !important;
-  min-height: 100px !important;
+
+  line-height: 1.7 !important;
+
+  overflow-y: auto !important;
+
+  min-height: 0 !important;
 }
 
 .tb-result--error {
@@ -466,13 +505,20 @@
 }
 
 /* ─── 푸터 ─── */
+/* ─── 푸터 ─── */
 .tb-footer {
   display: flex !important;
   align-items: center !important;
   justify-content: space-between !important;
-  padding: 12px 20px 18px !important;
+
+  padding: 16px 20px 20px !important;
+
+  margin-top: 4px !important;
+
   flex-shrink: 0 !important;
-  border-top: 1px solid rgba(255,255,255,0.07) !important;
+
+  border-top: 1px solid rgba(255,255,255,0.06) !important;
+
   background: #1C1C1E !important;
 }
 
@@ -694,8 +740,8 @@
   .tb-kbd { background: #F5F5F7 !important; border-color: #C7C7CC !important; color: #3A3A3C !important; }
   .tb-empty-desc { color: #8E8E93 !important; }
   /* 언어/교정 트리거 버튼 */
-  .tb-lang-trigger { color: #1e90ff !important; border-bottom-color: #D1D1D6 !important; }
-  .tb-lang-trigger:hover { color: #0070d8 !important; }
+  .tb-lang-trigger { background: #ffffff !important; border-color: #D1D1D6 !important; color: #3A3A3C !important; }
+  .tb-lang-trigger:hover { background: #F0F0F5 !important; border-color: #C0C0C5 !important; color: #1C1C1E !important; }
   /* 드롭다운 패널 */
   .tb-dd-panel { background: #ffffff !important; border-color: rgba(0,0,0,0.12) !important; box-shadow: 0 8px 24px rgba(0,0,0,0.15) !important; color: #1C1C1E !important; }
   .tb-dd-search-wrap { border-bottom-color: rgba(0,0,0,0.08) !important; }
