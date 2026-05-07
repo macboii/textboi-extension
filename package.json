@@ -2,6 +2,15 @@
   "name": "textboi-extension",
   "private": true,
   "scripts": {
-    "build": "echo \"No build needed (pure JS)\""
+    "build": "node build.js",
+    "dev": "node build.js --watch",
+    "clean": "rm -rf dist/"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  },
+  "dependencies": {
+    "diff-match-patch": "^1.0.5",
+    "franc": "^6.2.0"
   }
 }

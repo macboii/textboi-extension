@@ -5,19 +5,22 @@
 
   "permissions": [
     "activeTab",
+    "tabs",
     "storage",
     "scripting",
     "identity",
-    "contextMenus"
+    "contextMenus",
+    "clipboardWrite"
   ],
 
   "host_permissions": [
     "https://worker.textboi.ai/*",
-    "https://*.supabase.co/*"
+    "https://*.supabase.co/*",
+    "https://supabase-rest-api.bangcoderpro.workers.dev/*"
   ],
 
   "background": {
-    "service_worker": "background/background.js",
+    "service_worker": "dist/background/background.js",
     "type": "module"
   },
 
@@ -41,11 +44,10 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["content/content.js"],
+      "js": ["dist/content/content.js"],
       "css": ["content/styles.css"]
     }
   ],
-
 
   "action": {
     "default_popup": "popup/popup.html"

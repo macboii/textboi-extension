@@ -1,39 +1,83 @@
-export async function getAccessToken() {
-  return new Promise((resolve) => {
-    chrome.storage.local.get("tb_token", (result) => {
-      resolve(result?.tb_token || "");
-    });
+import {
+  SUPABASE_URL,
+  SUPABASE_ANON_KEY,
+} from "./constants.js";
+import { setTokens, clearTokens, getRefreshToken } from "./storage.js";
+
+export async function loginWithGoogle() {
+  const redirectUrl = chrome.identity.getRedirectURL();
+  const authUrl =
+    `${SUPABASE_URL}/auth/v1/authorize?provider=google` +
+    `&redirect_to=${encodeURIComponent(redirectUrl)}`;
+
+  return new Promise((resolve, reject) => {
+    chrome.identity.launchWebAuthFlow(
+      { url: authUrl, interactive: true },
+      async (redirected) => {
+        if (chrome.runtime.lastError || !redirected) {
+          return reject(
+            new Error(chrome.runtime.lastError?.message || "Login cancelled")
+          );
+        }
+
+        const url = new URL(redirected);
+        const params = new URLSearchParams(
+          url.hash ? url.hash.slice(1) : url.search.slice(1)
+        );
+
+        const accessToken = params.get("access_token");
+        const refreshToken = params.get("refresh_token");
+
+        if (!accessToken) return reject(new Error("No access token"));
+
+        await setTokens(accessToken, refreshToken);
+        broadcastAuthChange(true);
+        resolve();
+      }
+    );
   });
 }
 
-export async function loginWithGoogle() {
-  return new Promise((resolve, reject) => {
-    chrome.identity.launchWebAuthFlow(
+export async function refreshAccessToken() {
+  const refreshToken = await getRefreshToken();
+  if (!refreshToken) return null;
+
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`,
       {
-        url: "https://YOUR-SUPABASE-URL/auth/v1/authorize?provider=google",
-        interactive: true
-      },
-      (redirectUrl) => {
-        if (!redirectUrl) {
-          reject(new Error("Login cancelled"));
-          return;
-        }
-
-        const url = new URL(redirectUrl);
-
-        const accessToken =
-          url.searchParams.get("access_token") ||
-          new URLSearchParams(url.hash.slice(1)).get("access_token");
-
-        if (!accessToken) {
-          reject(new Error("No access token"));
-          return;
-        }
-
-        chrome.storage.local.set({ tb_token: accessToken }, () => {
-          resolve();
-        });
+        method: "POST",
+        headers: {
+          apikey: SUPABASE_ANON_KEY,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ refresh_token: refreshToken }),
       }
     );
+
+    if (!res.ok) return null;
+
+    const data = await res.json();
+    if (!data.access_token) return null;
+
+    await setTokens(data.access_token, data.refresh_token);
+    return data.access_token;
+  } catch {
+    return null;
+  }
+}
+
+export async function logout() {
+  await clearTokens();
+  broadcastAuthChange(false);
+}
+
+function broadcastAuthChange(loggedIn) {
+  chrome.tabs.query({}, (tabs) => {
+    for (const tab of tabs) {
+      chrome.tabs
+        .sendMessage(tab.id, { type: "AUTH_CHANGED", loggedIn })
+        .catch(() => {});
+    }
   });
 }

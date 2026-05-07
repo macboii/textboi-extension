@@ -1,0 +1,138 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+}
+
+body {
+  width: 240px;
+  background: #ffffff;
+  color: #111827;
+  font-size: 13px;
+}
+
+.tb-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.tb-logo {
+  font-size: 14px;
+  font-weight: 700;
+  color: #2563eb;
+}
+
+.tb-email {
+  padding: 8px 14px 0;
+  font-size: 11px;
+  color: #6b7280;
+  word-break: break-all;
+}
+
+.tb-auth {
+  padding: 20px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tb-auth-desc {
+  font-size: 12px;
+  color: #6b7280;
+  line-height: 1.5;
+}
+
+.tb-settings {
+  padding: 10px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tb-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.tb-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tb-select {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 7px;
+  font-size: 12px;
+  color: #374151;
+  background: #f9fafb;
+  outline: none;
+  cursor: pointer;
+}
+.tb-select:focus { border-color: #2563eb; }
+
+.tb-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.tb-tab {
+  flex: 1;
+  padding: 6px 0;
+  border: 1px solid #e5e7eb;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #6b7280;
+  background: #f9fafb;
+  cursor: pointer;
+}
+.tb-tab--active {
+  background: #eff6ff;
+  border-color: #2563eb;
+  color: #2563eb;
+  font-weight: 600;
+}
+
+.tb-btn {
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+}
+
+.tb-btn--primary {
+  background: #2563eb;
+  color: #fff;
+  width: 100%;
+}
+.tb-btn--primary:hover { background: #1d4ed8; }
+.tb-btn--primary:disabled { background: #93c5fd; cursor: not-allowed; }
+
+.tb-btn--ghost {
+  background: none;
+  color: #9ca3af;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 6px;
+}
+.tb-btn--ghost:hover { color: #374151; }
+
+@media (prefers-color-scheme: dark) {
+  body { background: #1f2937; color: #f9fafb; }
+  .tb-header { border-bottom-color: #374151; }
+  .tb-select { background: #111827; border-color: #374151; color: #f3f4f6; }
+  .tb-tab { background: #111827; border-color: #374151; color: #9ca3af; }
+  .tb-tab--active { background: #1e3a5f; border-color: #3b82f6; color: #93c5fd; }
+}
