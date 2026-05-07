@@ -15,6 +15,7 @@ OCR 기능 없음. 데스크탑 앱(`textBoi_desktop/`)의 API, 텍스트 정제
 | [`.claude/rules/architecture.md`](.claude/rules/architecture.md) | 파일 역할 경계, 메시지 타입, 전역 상태 |
 | [`.claude/rules/content-script-patterns.md`](.claude/rules/content-script-patterns.md) | 이중 복사 감지, 사이트별 선택 처리, Replace 전략 |
 | [`.claude/rules/replace-strategy.md`](.claude/rules/replace-strategy.md) | 환경별(Web/Gmail/Docs) 텍스트 치환 패턴 |
+| [`.claude/rules/ui-redesign-plan.md`](.claude/rules/ui-redesign-plan.md) | SidePanel UI 리디자인 계획 (데스크탑 앱 디자인 기준) |
 
 ---
 
@@ -123,9 +124,10 @@ URL·키 하드코딩 금지. 반드시 `utils/constants.js`에서 import.
 
 | 사이트 | 트리거 | UI | Replace 방식 |
 |--------|--------|-----|-------------|
-| 일반 웹 | `copy` 이벤트 × 2 | Side Panel (우측 슬라이드) | Range.deleteContents + insertNode |
-| Gmail | `copy` 이벤트 × 2 | Side Panel | Range.deleteContents + insertNode |
-| Google Docs/Slides | `keydown` Cmd+C × 2 | Mini Popover (선택 근처) | clipboard.writeText + Cmd+V 시뮬레이션 |
+| 일반 웹 | `copy` 이벤트 × 2 | Side Panel (우측 고정) | Range.deleteContents + insertNode |
+| Gmail | iframe copy 이벤트 × 2 (MutationObserver로 iframe 감지) | Side Panel | Range.deleteContents + insertNode |
+| Google Docs/Slides | iframe keydown Cmd+C × 2 + `navigator.clipboard.readText()` | Mini Popover (선택 근처) | sync execCommand('copy') → execCommand('paste') → ClipboardEvent fallback |
+| Google Sheets | `copy` 이벤트 × 2 (DOM 기반, 일반 웹과 동일) | Side Panel | Range.deleteContents + insertNode |
 
 ---
 

@@ -1,11 +1,12 @@
 import { getSettings, saveSettings } from "../utils/storage.js";
-import { DOUBLE_COPY_THRESHOLD_MS, MODELS, LANGUAGES } from "../utils/constants.js";
+import { DOUBLE_COPY_THRESHOLD_MS, MODELS, LANGUAGES, REWRITE_TYPES } from "../utils/constants.js";
 
 // ═══════════════════════════════════════════════════════
 // 전역 상태
 // ═══════════════════════════════════════════════════════
 
 let lastSelectionRange = null;
+let lastSelectionRect = null;
 let lastCopyAt = 0;
 
 // ═══════════════════════════════════════════════════════
@@ -13,10 +14,13 @@ let lastCopyAt = 0;
 // ═══════════════════════════════════════════════════════
 
 function isGoogleDocsLike() {
-  return (
-    location.hostname.includes("docs.google.com") ||
-    location.hostname.includes("slides.google.com")
-  );
+  // Sheets는 DOM 기반 → 일반 copy 이벤트 방식 사용
+  // Docs(document), Slides만 canvas 기반 → keydown + clipboard 방식
+  const path = location.pathname;
+  if (location.hostname.includes("docs.google.com")) {
+    return path.includes("/document/") || path.includes("/presentation/");
+  }
+  return location.hostname.includes("slides.google.com");
 }
 
 function isGmailDomain() {
@@ -119,16 +123,31 @@ function showToast(message, type = "success") {
 // 처리 트리거
 // ═══════════════════════════════════════════════════════
 
+function isContextAlive() {
+  try { return !!chrome.runtime?.id; } catch { return false; }
+}
+
+// Suppress "Extension context invalidated" unhandled rejections
+// (occurs when extension reloads while content script is still alive)
+window.addEventListener("unhandledrejection", (event) => {
+  if (event.reason?.message?.includes("Extension context invalidated")) {
+    event.preventDefault();
+  }
+});
+
 async function triggerProcessing(text) {
-  const settings = await getSettings();
-  chrome.runtime.sendMessage({
-    type: "PROCESS_TEXT",
-    mode: settings.mode,
-    text,
-    targetLang: settings.targetLang,
-    model: settings.model,
-    rewritePrompt: settings.rewritePrompt,
-  });
+  try {
+    if (!isContextAlive()) return;
+    const settings = await getSettings();
+    chrome.runtime.sendMessage({
+      type: "PROCESS_TEXT",
+      mode: settings.mode,
+      text,
+      targetLang: settings.targetLang,
+      model: settings.model,
+      rewritePrompt: settings.rewritePrompt,
+    }).catch(() => {});
+  } catch {}
 }
 
 function onDoubleCopy(text) {
@@ -152,24 +171,60 @@ const SidePanel = {
   originalText: "",
 
   async show(text) {
-    this.remove();
-    this.state = "loading";
-    this.currentResult = "";
-    this.originalText = text;
+    try {
+      this.remove();
+      this.state = "loading";
+      this.currentResult = "";
+      this.originalText = text;
 
-    this.el = document.createElement("div");
-    this.el.id = "textboi-panel";
-    this.el.innerHTML = this._buildHTML();
-    document.body.appendChild(this.el);
+      this.el = document.createElement("div");
+      this.el.id = "textboi-panel";
+      this.el.innerHTML = this._buildHTML();
+      document.body.appendChild(this.el);
 
-    // 사용자 입력값은 textContent/value로만 설정 (XSS 방지)
-    this.el.querySelector(".tb-original").value = text;
+      this._position();
 
-    const settings = await getSettings();
-    this._populateSelects(settings);
-    this._bindEvents(settings);
+      this.el.querySelector(".tb-original").value = text;
 
-    requestAnimationFrame(() => this.el.classList.add("tb-panel--open"));
+      const settings = await getSettings();
+      this._populateSelects(settings);
+      this._bindEvents(settings);
+
+      requestAnimationFrame(() => this.el?.classList.add("tb-panel--open"));
+    } catch (e) {
+      if (!e?.message?.includes("Extension context invalidated")) throw e;
+    }
+  },
+
+  _position() {
+    const W = 380, margin = 16;
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const rect = lastSelectionRect;
+
+    // 항상 우측 고정
+    const left = vw - W - margin;
+
+    let top;
+    if (rect && (rect.top || rect.bottom)) {
+      // 선택 영역 기준 수직 정렬 (아래 공간 있으면 아래, 없으면 위)
+      const panelH = Math.min(560, vh - margin * 2);
+      const spaceBelow = vh - rect.bottom - margin;
+      if (spaceBelow >= panelH) {
+        top = rect.bottom + margin;
+      } else if (rect.top - margin >= panelH) {
+        top = rect.top - panelH - margin;
+      } else {
+        // 화면 중앙
+        top = Math.max(margin, (vh - panelH) / 2);
+      }
+    } else {
+      top = Math.max(margin, (vh - 500) / 2);
+    }
+
+    Object.assign(this.el.style, {
+      top: `${Math.max(margin, Math.min(top, vh - margin - 200))}px`,
+      left: `${Math.max(margin, left)}px`,
+    });
   },
 
   appendChunk(chunk) {
@@ -195,7 +250,7 @@ const SidePanel = {
     this.state = "error";
     const resultEl = this.el.querySelector(".tb-result");
     if (resultEl) {
-      resultEl.textContent = message || "오류가 발생했습니다.";
+      resultEl.textContent = message || "An error occurred.";
       resultEl.classList.add("tb-result--error");
     }
     this.el.querySelector(".tb-spinner")?.remove();
@@ -208,8 +263,15 @@ const SidePanel = {
     resultEl.innerHTML = "";
     const banner = document.createElement("div");
     banner.className = "tb-login-prompt";
-    banner.textContent = "무료 사용 횟수를 모두 사용했습니다. 로그인하면 계속 사용할 수 있습니다.";
+    banner.textContent = "Free usage limit reached. Sign in to continue.";
     resultEl.appendChild(banner);
+  },
+
+  showGuestBanner(remaining) {
+    const banner = this.el?.querySelector(".tb-guest-banner");
+    if (!banner) return;
+    banner.textContent = `${remaining} free use${remaining === 1 ? "" : "s"} remaining · Sign in for unlimited`;
+    banner.style.display = "";
   },
 
   remove() {
@@ -219,7 +281,9 @@ const SidePanel = {
       setTimeout(() => el.remove(), 220);
       this.el = null;
     }
-    chrome.runtime.sendMessage({ type: "ABORT_STREAM" }).catch(() => {});
+    try {
+      chrome.runtime.sendMessage({ type: "ABORT_STREAM" }).catch(() => {});
+    } catch {}
   },
 
   _buildHTML() {
@@ -229,73 +293,142 @@ const SidePanel = {
     const langOptions = LANGUAGES.map(
       (l) => `<option value="${l.code}">${l.label}</option>`
     ).join("");
+    const rewriteOptions = REWRITE_TYPES.map(
+      (r) => `<option value="${r.id}">${r.label}</option>`
+    ).join("");
 
     return `
       <div class="tb-header">
-        <button class="tb-close-btn" aria-label="닫기">×</button>
-        <span class="tb-title">TextBoi</span>
+        <div class="tb-mode-btns">
+          <button class="tb-mode-btn tb-mode-btn--active" data-mode="translate">
+            <span class="tb-mode-icon">交</span> Translate
+          </button>
+          <button class="tb-mode-btn" data-mode="correct">
+            <span class="tb-mode-icon">A✓</span> Correct
+          </button>
+        </div>
+        <button class="tb-close-btn" aria-label="Close">✕</button>
       </div>
-      <div class="tb-mode-tabs">
-        <button class="tb-tab tb-tab--active" data-mode="translate">번역</button>
-        <button class="tb-tab" data-mode="correct">교정</button>
+      <div class="tb-model-row">
+        <select class="tb-model-select">${modelOptions}</select>
       </div>
-      <div class="tb-body">
-        <textarea class="tb-original" rows="4" placeholder="원본 텍스트"></textarea>
-        <div class="tb-controls">
-          <select class="tb-lang-select">${langOptions}</select>
-          <select class="tb-model-select">${modelOptions}</select>
+      <div class="tb-guest-banner" style="display:none"></div>
+      <div class="tb-section tb-section--top">
+        <div class="tb-section-bar">
+          <span class="tb-lang-badge">🌐 Auto-detect</span>
         </div>
-        <div class="tb-result-wrap">
-          <div class="tb-spinner"></div>
-          <div class="tb-result"></div>
+        <div class="tb-text-box">
+          <textarea class="tb-original" placeholder="Selected text appears here..." rows="4"></textarea>
         </div>
-        <div class="tb-actions">
-          <button class="tb-replace-btn" disabled>Replace <kbd>⌘↵</kbd></button>
-          <button class="tb-retry-btn" aria-label="재실행">↺</button>
+      </div>
+      <div class="tb-divider"></div>
+      <div class="tb-section tb-section--bottom">
+        <div class="tb-section-bar">
+          <select class="tb-target-lang-select tb-translate-only">${langOptions}</select>
+          <select class="tb-rewrite-select tb-correct-only" style="display:none">${rewriteOptions}</select>
         </div>
+        <div class="tb-text-box">
+          <div class="tb-result-wrap">
+            <div class="tb-spinner"></div>
+            <div class="tb-result"></div>
+          </div>
+        </div>
+        <div class="tb-custom-prompt-wrap tb-correct-only" style="display:none">
+          <textarea class="tb-custom-prompt" placeholder="Custom instruction (optional)..." rows="2"></textarea>
+        </div>
+      </div>
+      <div class="tb-footer">
+        <button class="tb-retry-btn" aria-label="Retry">↺</button>
+        <button class="tb-replace-btn" disabled>Apply <kbd>⌘↵</kbd></button>
       </div>
     `;
   },
 
   _populateSelects(settings) {
-    const langSel = this.el.querySelector(".tb-lang-select");
+    const targetLangSel = this.el.querySelector(".tb-target-lang-select");
     const modelSel = this.el.querySelector(".tb-model-select");
-    if (langSel) langSel.value = settings.targetLang;
-    if (modelSel) modelSel.value = settings.model;
+    const rewriteSel = this.el.querySelector(".tb-rewrite-select");
 
-    const activeTab = this.el.querySelector(`.tb-tab[data-mode="${settings.mode}"]`);
-    if (activeTab) {
-      this.el.querySelectorAll(".tb-tab").forEach((t) => t.classList.remove("tb-tab--active"));
-      activeTab.classList.add("tb-tab--active");
+    if (targetLangSel) targetLangSel.value = settings.targetLang;
+    if (modelSel) modelSel.value = settings.model;
+    if (rewriteSel) {
+      // Backward compat: rewritePrompt may be old id ("proofread") or full prompt text
+      const matchedByPrompt = REWRITE_TYPES.find(r => r.prompt === settings.rewritePrompt);
+      const matchedById = REWRITE_TYPES.find(r => r.id === settings.rewritePrompt);
+      rewriteSel.value = matchedByPrompt?.id || matchedById?.id || "proofread";
     }
+
+    // 모드 버튼 active 상태 반영
+    this.el.querySelectorAll(".tb-mode-btn").forEach((btn) => {
+      btn.classList.toggle("tb-mode-btn--active", btn.dataset.mode === settings.mode);
+    });
+
+    // translate-only / correct-only 요소 표시
+    this._switchMode(settings.mode);
+  },
+
+  _switchMode(mode) {
+    const isCorrect = mode === "correct";
+    this.el.querySelectorAll(".tb-translate-only").forEach(el => {
+      el.style.display = isCorrect ? "none" : "";
+    });
+    this.el.querySelectorAll(".tb-correct-only").forEach(el => {
+      el.style.display = isCorrect ? "" : "none";
+    });
   },
 
   _bindEvents(settings) {
     // 닫기
     this.el.querySelector(".tb-close-btn").addEventListener("click", () => this.remove());
 
-    // 모드 탭 전환
-    this.el.querySelectorAll(".tb-tab").forEach((tab) => {
-      tab.addEventListener("click", async () => {
-        if (tab.dataset.mode === settings.mode) return;
-        this.el.querySelectorAll(".tb-tab").forEach((t) => t.classList.remove("tb-tab--active"));
-        tab.classList.add("tb-tab--active");
-        await saveSettings({ mode: tab.dataset.mode });
-        settings.mode = tab.dataset.mode;
+    // 모드 버튼 전환
+    this.el.querySelectorAll(".tb-mode-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (btn.dataset.mode === settings.mode) return;
+        this.el.querySelectorAll(".tb-mode-btn").forEach((b) => b.classList.remove("tb-mode-btn--active"));
+        btn.classList.add("tb-mode-btn--active");
+        settings.mode = btn.dataset.mode;
+        this._switchMode(settings.mode);
+        await saveSettings({ mode: settings.mode });
         this._rerun(settings);
       });
     });
 
-    // 언어 변경
-    this.el.querySelector(".tb-lang-select").addEventListener("change", async (e) => {
-      await saveSettings({ targetLang: e.target.value });
+    // 대상 언어 변경 (translate 모드)
+    this.el.querySelector(".tb-target-lang-select").addEventListener("change", async (e) => {
       settings.targetLang = e.target.value;
+      await saveSettings({ targetLang: e.target.value });
+    });
+
+    // 교정 스타일 변경 (correct 모드)
+    this.el.querySelector(".tb-rewrite-select").addEventListener("change", async (e) => {
+      const found = REWRITE_TYPES.find(r => r.id === e.target.value);
+      const customVal = this.el.querySelector(".tb-custom-prompt")?.value?.trim();
+      const prompt = customVal || found?.prompt || "";
+      settings.rewritePrompt = prompt;
+      await saveSettings({ rewritePrompt: prompt });
+    });
+
+    // 커스텀 프롬프트 — input 시 메모리 업데이트, blur 시 저장
+    const customPromptEl = this.el.querySelector(".tb-custom-prompt");
+    customPromptEl.addEventListener("input", (e) => {
+      const customVal = e.target.value.trim();
+      if (customVal) {
+        settings.rewritePrompt = customVal;
+      } else {
+        const id = this.el.querySelector(".tb-rewrite-select")?.value || "proofread";
+        const found = REWRITE_TYPES.find(r => r.id === id);
+        settings.rewritePrompt = found?.prompt || "";
+      }
+    });
+    customPromptEl.addEventListener("blur", async () => {
+      await saveSettings({ rewritePrompt: settings.rewritePrompt });
     });
 
     // 모델 변경
     this.el.querySelector(".tb-model-select").addEventListener("change", async (e) => {
-      await saveSettings({ model: e.target.value });
       settings.model = e.target.value;
+      await saveSettings({ model: e.target.value });
     });
 
     // Replace 버튼
@@ -317,7 +450,20 @@ const SidePanel = {
 
   _rerun(settings) {
     const text = this.el?.querySelector(".tb-original")?.value?.trim();
-    if (!text) return;
+    if (!text || !isContextAlive()) return;
+
+    // correct 모드: 커스텀 프롬프트가 있으면 우선 사용
+    if (settings.mode === "correct") {
+      const customVal = this.el?.querySelector(".tb-custom-prompt")?.value?.trim();
+      if (customVal) {
+        settings.rewritePrompt = customVal;
+      } else {
+        const id = this.el?.querySelector(".tb-rewrite-select")?.value || "proofread";
+        const found = REWRITE_TYPES.find(r => r.id === id);
+        if (found) settings.rewritePrompt = found.prompt;
+      }
+    }
+
     this.state = "loading";
     this.currentResult = "";
     const resultEl = this.el.querySelector(".tb-result");
@@ -334,14 +480,16 @@ const SidePanel = {
       spinnerWrap.prepend(spinner);
     }
 
-    chrome.runtime.sendMessage({
-      type: "PROCESS_TEXT",
-      mode: settings.mode,
-      text,
-      targetLang: settings.targetLang,
-      model: settings.model,
-      rewritePrompt: settings.rewritePrompt,
-    });
+    try {
+      chrome.runtime.sendMessage({
+        type: "PROCESS_TEXT",
+        mode: settings.mode,
+        text,
+        targetLang: settings.targetLang,
+        model: settings.model,
+        rewritePrompt: settings.rewritePrompt,
+      }).catch(() => {});
+    } catch {}
   },
 };
 
@@ -368,7 +516,7 @@ const MiniPopover = {
         <div class="tb-pop-result"></div>
       </div>
       <div class="tb-pop-actions">
-        <button class="tb-pop-replace-btn" disabled>✅ Replace <kbd>⌘↵</kbd></button>
+        <button class="tb-pop-replace-btn tb-pop-replace-btn--loading">✅ Replace <kbd>⌘↵</kbd></button>
       </div>
     `;
 
@@ -398,7 +546,7 @@ const MiniPopover = {
     const resultEl = this.el.querySelector(".tb-pop-result");
     if (resultEl) resultEl.textContent = result;
     this.el.querySelector(".tb-spinner")?.remove();
-    this.el.querySelector(".tb-pop-replace-btn")?.removeAttribute("disabled");
+    this.el.querySelector(".tb-pop-replace-btn")?.classList.remove("tb-pop-replace-btn--loading");
   },
 
   setError(message) {
@@ -406,21 +554,24 @@ const MiniPopover = {
     this.state = "error";
     this.el.querySelector(".tb-spinner")?.remove();
     const resultEl = this.el.querySelector(".tb-pop-result");
-    if (resultEl) resultEl.textContent = message || "오류가 발생했습니다.";
+    if (resultEl) resultEl.textContent = message || "An error occurred.";
   },
 
   remove() {
     this.el?.remove();
     this.el = null;
     this.state = null;
-    chrome.runtime.sendMessage({ type: "ABORT_STREAM" }).catch(() => {});
+    try {
+      chrome.runtime.sendMessage({ type: "ABORT_STREAM" }).catch(() => {});
+    } catch {}
   },
 
   _bindEvents() {
     this.el.querySelector(".tb-pop-replace-btn").addEventListener("mousedown", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      if (this.state === "done") handleReplace(this.currentResult);
+      if (this.state !== "done") return;
+      handleReplace(this.currentResult);
     });
 
     // 외부 클릭 닫기
@@ -491,7 +642,7 @@ async function handleReplace(newText) {
 
 function replaceSelectedTextInWeb(newText) {
   if (!lastSelectionRange) {
-    showToast("선택 범위가 사라졌습니다. 다시 선택해 주세요.", "error");
+    showToast("Selection lost. Please select text again.", "error");
     return;
   }
 
@@ -509,7 +660,7 @@ function replaceSelectedTextInWeb(newText) {
       } catch {}
     }
     if (!sel) {
-      showToast("편집 영역을 찾을 수 없습니다.", "error");
+      showToast("Could not find editable area.", "error");
       return;
     }
   } else {
@@ -543,84 +694,157 @@ function replaceSelectedTextInWeb(newText) {
 }
 
 async function replaceSelectedTextInGoogleDocs(newText) {
+  const iframe =
+    document.querySelector("iframe.docs-texteventtarget-iframe") ||
+    document.querySelector('iframe[tabindex="1"]');
+
+  // ── Strategy 1: sync copy → sync paste (stays in user-gesture context) ──
+  // navigator.clipboard.writeText is async and loses user-gesture context,
+  // making execCommand('paste') fail. Using the deprecated-but-functional
+  // execCommand('copy') keeps everything synchronous and trusted.
+  let syncCopyOk = false;
   try {
-    await navigator.clipboard.writeText(newText);
+    const ta = document.createElement("textarea");
+    Object.assign(ta.style, {
+      position: "fixed", top: "-9999px", left: "-9999px", opacity: "0",
+    });
+    ta.value = newText;
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    syncCopyOk = document.execCommand("copy");
+    ta.remove();
+  } catch {}
 
-    const iframe =
-      document.querySelector("iframe.docs-texteventtarget-iframe") ||
-      document.querySelector('iframe[tabindex="1"]');
-
-    if (!iframe) {
-      showToast("Google Docs 편집 영역을 찾을 수 없습니다.", "error");
-      return;
-    }
-
-    iframe.focus();
-    iframe.contentWindow.document.body.focus();
-
-    const isMac = navigator.platform.includes("Mac");
-    iframe.contentWindow.document.dispatchEvent(
-      new KeyboardEvent("keydown", {
-        key: "v",
-        code: "KeyV",
-        metaKey: isMac,
-        ctrlKey: !isMac,
-        bubbles: true,
-      })
-    );
-
-    showToast("✅ Replaced");
-  } catch (e) {
-    console.error("[TextBoi] Docs replace failed", e);
-    showToast("자동 붙여넣기 실패. Cmd+V로 직접 붙여넣기 해주세요.", "error");
+  if (iframe && syncCopyOk) {
+    try {
+      iframe.focus();
+      iframe.contentDocument.body.focus();
+      const pasted = iframe.contentDocument.execCommand("paste");
+      if (pasted) {
+        showToast("✅ Replaced");
+        return;
+      }
+    } catch {}
   }
+
+  // ── Strategy 2: ClipboardEvent with DataTransfer ──
+  try { await navigator.clipboard.writeText(newText); } catch {}
+
+  if (iframe) {
+    try {
+      const dt = new DataTransfer();
+      dt.setData("text/plain", newText);
+      dt.setData("text/html", newText);
+      const notHandled = iframe.contentDocument.dispatchEvent(
+        new ClipboardEvent("paste", {
+          clipboardData: dt,
+          bubbles: true,
+          cancelable: true,
+        })
+      );
+      if (!notHandled) {
+        showToast("✅ Replaced");
+        return;
+      }
+    } catch {}
+  }
+
+  // ── Final fallback: clipboard is already written, guide manual paste ──
+  showToast("Copied! Press Cmd+V to paste.", "error");
 }
 
 // ═══════════════════════════════════════════════════════
 // 이중 복사 감지 — Web / Gmail (copy 이벤트 기반)
 // ═══════════════════════════════════════════════════════
 
-function initCopyDetector() {
-  // mouseup: Bubble 표시 + Range 저장
-  document.addEventListener("mousedown", () => {
-    Bubble.remove();
-  });
+// copy 이벤트 핸들러 (document + iframe 공유)
+function _handleCopyEvent() {
+  const now = Date.now();
+  const text = getSelectedTextUnified();
+  if ((now - lastCopyAt) < DOUBLE_COPY_THRESHOLD_MS && text) {
+    lastCopyAt = 0;
+    saveSelectionRange();
+    onDoubleCopy(text);
+  } else {
+    lastCopyAt = now;
+    saveSelectionRange();
+  }
+}
 
-  document.addEventListener("mouseup", () => {
-    const sel = window.getSelection();
-    const text = sel?.toString().trim() ?? "";
-    if (!text) return Bubble.remove();
+// mouseup 핸들러 (document + iframe 공유)
+function _handleMouseUp() {
+  // 1. 메인 document selection
+  const sel = window.getSelection();
+  let text = sel?.toString().trim() ?? "";
+  let rect = null;
 
-    if (sel.rangeCount > 0) {
-      lastSelectionRange = sel.getRangeAt(0).cloneRange();
+  if (text && sel.rangeCount > 0) {
+    lastSelectionRange = sel.getRangeAt(0).cloneRange();
+    try { rect = sel.getRangeAt(0).getBoundingClientRect(); } catch {}
+  }
+
+  // 2. iframe selection (Gmail compose 등)
+  if (!text) {
+    for (const frame of document.querySelectorAll("iframe")) {
+      try {
+        const iSel = frame.contentWindow.getSelection();
+        const iText = iSel?.toString().trim();
+        if (iText && iSel.rangeCount > 0) {
+          text = iText;
+          lastSelectionRange = iSel.getRangeAt(0).cloneRange();
+          const iRect = iSel.getRangeAt(0).getBoundingClientRect();
+          const fRect = frame.getBoundingClientRect();
+          rect = {
+            top: iRect.top + fRect.top,
+            bottom: iRect.bottom + fRect.top,
+            left: iRect.left + fRect.left,
+            right: iRect.right + fRect.left,
+            width: iRect.width,
+            height: iRect.height,
+          };
+          break;
+        }
+      } catch {}
     }
+  }
 
-    let rect;
+  if (!text) return Bubble.remove();
+  if (rect) lastSelectionRect = rect;
+  if (!lastSelectionRect?.width && !lastSelectionRect?.height) return;
+  Bubble.show(lastSelectionRect, text);
+}
+
+// Gmail iframe에 이벤트 리스너 부착
+function _attachIframeListeners() {
+  for (const frame of document.querySelectorAll("iframe")) {
+    if (frame._tbAttached) continue;
     try {
-      rect = sel.getRangeAt(0).getBoundingClientRect();
-    } catch {
-      return;
-    }
-    if (!rect.width && !rect.height) return;
+      const doc = frame.contentDocument;
+      if (!doc || !doc.body) continue;
+      // capture phase: Gmail이 stopPropagation 하더라도 먼저 받음
+      doc.addEventListener("copy", _handleCopyEvent, true);
+      doc.addEventListener("mouseup", _handleMouseUp);
+      doc.addEventListener("mousedown", () => Bubble.remove());
+      frame._tbAttached = true;
+    } catch {}
+  }
+}
 
-    // Gmail 읽기 영역이면 Bubble 표시 (Replace는 setDone에서 조건 처리)
-    Bubble.show(rect, text);
-  });
+function initCopyDetector() {
+  document.addEventListener("mousedown", () => Bubble.remove());
+  document.addEventListener("mouseup", _handleMouseUp);
 
-  // copy 이벤트 × 2 → 이중 복사 트리거
-  document.addEventListener("copy", () => {
-    const now = Date.now();
-    const text = getSelectedTextUnified();
+  // capture phase로 등록 → Gmail이 copy 이벤트를 막아도 먼저 수신
+  document.addEventListener("copy", _handleCopyEvent, true);
 
-    if ((now - lastCopyAt) < DOUBLE_COPY_THRESHOLD_MS && text) {
-      lastCopyAt = 0;
-      saveSelectionRange();
-      onDoubleCopy(text);
-    } else {
-      lastCopyAt = now;
-      saveSelectionRange();
-    }
-  });
+  // Gmail: compose 창이 iframe 안에 있어 copy 이벤트가 부모 document까지 버블링 안 됨
+  // → iframe에 직접 리스너 부착, 새 iframe 생성도 MutationObserver로 감시
+  if (isGmailDomain()) {
+    _attachIframeListeners();
+    const observer = new MutationObserver(_attachIframeListeners);
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -675,13 +899,21 @@ const DocsModule = {
     const iframe = document.querySelector("iframe.docs-texteventtarget-iframe");
     if (!iframe?.contentDocument) return false;
 
-    iframe.contentDocument.addEventListener("keydown", (e) => {
+    iframe.contentDocument.addEventListener("keydown", async (e) => {
       if (!((e.metaKey || e.ctrlKey) && e.key === "c")) return;
       const now = Date.now();
       if ((now - lastCopyAt) < DOUBLE_COPY_THRESHOLD_MS) {
         lastCopyAt = 0;
-        const text = getSelectedTextUnified();
-        if (text) onDoubleCopy(text);
+        // Docs는 canvas 기반 → DOM selection 없음
+        // 첫 번째 Cmd+C 시 Docs가 클립보드에 복사했으므로 거기서 읽음
+        try {
+          const text = await navigator.clipboard.readText();
+          if (text?.trim()) onDoubleCopy(text.trim());
+        } catch {
+          // clipboard-read 실패 시 DOM selection fallback
+          const text = getSelectedTextUnified();
+          if (text) onDoubleCopy(text);
+        }
       } else {
         lastCopyAt = now;
       }
@@ -749,6 +981,10 @@ chrome.runtime.onMessage.addListener((msg) => {
 
     case "GUEST_LIMIT_REACHED":
       SidePanel.showLoginPrompt();
+      break;
+
+    case "GUEST_REMAINING":
+      SidePanel.showGuestBanner(msg.remaining);
       break;
 
     case "AUTH_CHANGED":

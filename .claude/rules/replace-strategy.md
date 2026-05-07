@@ -56,45 +56,71 @@ function replaceSelectedTextInWeb(newText) {
 **React/Vue 입력 필드 주의**: 프레임워크는 DOM을 직접 조작하면 state가 불일치함.  
 `input` / `change` 이벤트를 dispatch해야 프레임워크가 변경을 인식함.
 
-## 전략 2: Clipboard + Paste (Google Docs)
+## 전략 2: Sync execCommand + ClipboardEvent 3단 폴백 (Google Docs)
 
 Google Docs는 canvas 기반 렌더링 → DOM Range 직접 조작 불가.  
-클립보드에 쓰고 Docs 편집 iframe에 붙여넣기 이벤트를 dispatch.
+`navigator.clipboard.writeText()`는 async이므로 await 이후 user-gesture context가 소멸 → `execCommand('paste')` 실패.  
+반드시 **동기 execCommand('copy')** 로 클립보드를 채운 뒤 iframe에 paste를 실행해야 user-gesture context가 유지된다.
+
+### 3단 폴백 전략
+
+```
+1. [동기] hidden textarea → execCommand('copy') → iframe.contentDocument.execCommand('paste')
+   ← user-gesture context 유지, Docs가 isTrusted paste로 수락
+2. [async] navigator.clipboard.writeText → ClipboardEvent('paste') dispatch on iframe
+   ← execCommand 실패 시 시도, Docs가 수락하면 성공
+3. "Copied! Press Cmd+V to paste." toast 표시
+```
 
 ```javascript
 async function replaceSelectedTextInGoogleDocs(newText) {
+  const iframe =
+    document.querySelector('iframe.docs-texteventtarget-iframe') ||
+    document.querySelector('iframe[tabindex="1"]');
+
+  // 전략 1: 동기 execCommand copy → paste (user-gesture context 유지)
+  let syncCopyOk = false;
   try {
-    await navigator.clipboard.writeText(newText);
-    
-    const iframe =
-      document.querySelector('iframe[tabindex="1"]') ||
-      document.querySelector('iframe.docs-texteventtarget-iframe');
-    
-    if (!iframe) {
-      showToast('❌ Google Docs 편집 영역을 찾을 수 없습니다.', 'error');
-      return;
-    }
-    
-    const win = iframe.contentWindow;
-    iframe.focus();
-    win.document.body.focus();
-    
-    const isMac = navigator.platform.includes('Mac');
-    win.document.dispatchEvent(new KeyboardEvent('keydown', {
-      key: 'v',
-      code: 'KeyV',
-      metaKey: isMac,
-      ctrlKey: !isMac,
-      bubbles: true,
-    }));
-  } catch (e) {
-    showToast('❌ 붙여넣기 실패. Cmd+V로 직접 붙여넣기 해주세요.', 'error');
-    console.error('Docs replace failed:', e);
+    const ta = document.createElement('textarea');
+    Object.assign(ta.style, { position: 'fixed', top: '-9999px', left: '-9999px', opacity: '0' });
+    ta.value = newText;
+    document.body.appendChild(ta);
+    ta.focus(); ta.select();
+    syncCopyOk = document.execCommand('copy');
+    ta.remove();
+  } catch {}
+
+  if (iframe && syncCopyOk) {
+    try {
+      iframe.focus();
+      iframe.contentDocument.body.focus();
+      const pasted = iframe.contentDocument.execCommand('paste');
+      if (pasted) { showToast('✅ Replaced'); return; }
+    } catch {}
   }
+
+  // 전략 2: async clipboard.writeText + ClipboardEvent dispatch
+  try { await navigator.clipboard.writeText(newText); } catch {}
+  if (iframe) {
+    try {
+      const dt = new DataTransfer();
+      dt.setData('text/plain', newText);
+      dt.setData('text/html', newText);
+      const notHandled = iframe.contentDocument.dispatchEvent(
+        new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })
+      );
+      if (!notHandled) { showToast('✅ Replaced'); return; }
+    } catch {}
+  }
+
+  // 전략 3: 수동 붙여넣기 안내
+  showToast('Copied! Press Cmd+V to paste.', 'error');
 }
 ```
 
-**주의**: `document.execCommand('paste')` 는 Chrome 109 이후 보안 정책으로 대부분의 사이트에서 동작하지 않음. 위 방식 (KeyboardEvent dispatch)을 사용할 것.
+**핵심 원칙**: `navigator.clipboard.writeText()`의 `await` 이후에는 user-gesture context 소멸.  
+`document.execCommand('copy')`는 동기 → user-gesture context 유지 → `execCommand('paste')`가 trusted event로 동작.  
+**KeyboardEvent('keydown') dispatch는 효과 없음** — Docs가 isTrusted 아닌 합성 키 이벤트를 무시함.
 
 ## 새 사이트 추가 시 체크리스트
 

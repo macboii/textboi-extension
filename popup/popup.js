@@ -19,24 +19,25 @@ function renderLoggedOut() {
   const app = document.getElementById("app");
   app.innerHTML = `
     <div class="tb-header">
+      <img src="../icons/icon32.png" class="tb-logo-img" alt="TextBoi">
       <span class="tb-logo">TextBoi</span>
     </div>
     <div class="tb-auth">
-      <p class="tb-auth-desc">로그인하면 무제한으로 사용할 수 있습니다.</p>
-      <button id="login-btn" class="tb-btn tb-btn--primary">Google로 로그인</button>
+      <p class="tb-auth-desc">Sign in for unlimited usage.</p>
+      <button id="login-btn" class="tb-btn tb-btn--primary">Sign in with Google</button>
     </div>
   `;
 
   document.getElementById("login-btn").addEventListener("click", async () => {
     const btn = document.getElementById("login-btn");
     btn.disabled = true;
-    btn.textContent = "로그인 중...";
+    btn.textContent = "Signing in...";
     try {
       await loginWithGoogle();
       init();
     } catch (e) {
       btn.disabled = false;
-      btn.textContent = "Google로 로그인";
+      btn.textContent = "Sign in with Google";
     }
   });
 }
@@ -59,28 +60,29 @@ function renderLoggedIn(token, settings) {
 
   app.innerHTML = `
     <div class="tb-header">
+      <img src="../icons/icon32.png" class="tb-logo-img" alt="TextBoi">
       <span class="tb-logo">TextBoi</span>
-      <button id="logout-btn" class="tb-btn tb-btn--ghost">로그아웃</button>
+      <button id="logout-btn" class="tb-btn tb-btn--ghost">Log out</button>
     </div>
     <p class="tb-email" id="tb-email"></p>
     <div class="tb-settings">
       <div class="tb-field">
-        <label class="tb-label">기본 모드</label>
+        <label class="tb-label">Mode</label>
         <div class="tb-tabs">
-          <button class="tb-tab${settings.mode === "translate" ? " tb-tab--active" : ""}" data-mode="translate">번역</button>
-          <button class="tb-tab${settings.mode === "correct" ? " tb-tab--active" : ""}" data-mode="correct">교정</button>
+          <button class="tb-tab${settings.mode === "translate" ? " tb-tab--active" : ""}" data-mode="translate">Translate</button>
+          <button class="tb-tab${settings.mode === "correct" ? " tb-tab--active" : ""}" data-mode="correct">Correct</button>
         </div>
       </div>
       <div class="tb-field" id="lang-field">
-        <label class="tb-label">번역 언어</label>
+        <label class="tb-label">Target language</label>
         <select id="lang-select" class="tb-select">${langOpts}</select>
       </div>
       <div class="tb-field" id="rewrite-field">
-        <label class="tb-label">교정 스타일</label>
+        <label class="tb-label">Correction style</label>
         <select id="rewrite-select" class="tb-select">${rewriteOpts}</select>
       </div>
       <div class="tb-field">
-        <label class="tb-label">모델</label>
+        <label class="tb-label">Model</label>
         <select id="model-select" class="tb-select">${modelOpts}</select>
       </div>
     </div>

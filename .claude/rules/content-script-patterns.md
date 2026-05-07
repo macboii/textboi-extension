@@ -226,8 +226,13 @@ chrome.runtime.onMessage.addListener((msg) => {
 
 ```javascript
 function isGoogleDocsLike() {
-  return location.hostname.includes('docs.google.com')
-      || location.hostname.includes('slides.google.com');
+  // Google Sheets(/spreadsheets/)는 DOM 기반 → 일반 웹처럼 처리
+  // Docs(/document/)와 Slides(/presentation/)만 canvas 기반 → MiniPopover + clipboard paste
+  const path = location.pathname;
+  if (location.hostname.includes('docs.google.com')) {
+    return path.includes('/document/') || path.includes('/presentation/');
+  }
+  return location.hostname.includes('slides.google.com');
 }
 
 function isGmailDomain() {

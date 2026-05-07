@@ -56,7 +56,7 @@ chrome.commands.onCommand.addListener(async (command) => {
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
     id: "textboi-translate",
-    title: "TextBoi로 번역",
+    title: "Translate with TextBoi",
     contexts: ["selection"],
   });
 });
@@ -84,6 +84,7 @@ async function handleProcessText(msg, tabId, signal) {
   const isGuest = !token;
 
   // 2. 게스트 한도 확인
+  let guestRemaining = null;
   if (isGuest) {
     const deviceId = await getDeviceId();
     const quota = await checkGuestQuota(deviceId);
@@ -91,6 +92,7 @@ async function handleProcessText(msg, tabId, signal) {
       chrome.tabs.sendMessage(tabId, { type: "GUEST_LIMIT_REACHED" });
       return;
     }
+    guestRemaining = quota.remaining ?? null;
   }
 
   // 3. 엔드포인트 + 헤더 결정
@@ -112,26 +114,45 @@ async function handleProcessText(msg, tabId, signal) {
       ? buildTranslateMessages(msg.text, msg.targetLang || "ko")
       : buildCorrectMessages(msg.text, msg.rewritePrompt || "proofread");
 
-  // 5. 스트리밍 fetch
+  // 5. 스트리밍 fetch (401 시 토큰 refresh 후 1회 재시도)
+  const body = JSON.stringify({ model: msg.model || "gpt-4o-mini", stream: true, messages });
+
   let res;
   try {
-    res = await fetch(endpoint, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ model: msg.model || "gpt-4o-mini", stream: true, messages }),
-      signal,
-    });
+    res = await fetch(endpoint, { method: "POST", headers, body, signal });
   } catch (e) {
     if (e.name === "AbortError") return;
-    chrome.tabs.sendMessage(tabId, { type: "STREAM_ERROR", message: "네트워크 오류가 발생했습니다." });
+    chrome.tabs.sendMessage(tabId, { type: "STREAM_ERROR", message: "Network error. Please try again." });
     return;
   }
 
+  // 토큰 만료(401) → refresh 후 재시도
+  if (res.status === 401 && !isGuest) {
+    const newToken = await refreshAccessToken();
+    if (newToken) {
+      headers.Authorization = `Bearer ${newToken}`;
+      try {
+        res = await fetch(endpoint, { method: "POST", headers, body, signal });
+      } catch (e) {
+        if (e.name === "AbortError") return;
+        chrome.tabs.sendMessage(tabId, { type: "STREAM_ERROR", message: "Network error. Please try again." });
+        return;
+      }
+    } else {
+      chrome.tabs.sendMessage(tabId, {
+        type: "STREAM_ERROR",
+        message: "Session expired. Please sign in again from the extension popup.",
+      });
+      return;
+    }
+  }
+
   if (!res.ok) {
-    const errText = await res.text().catch(() => "");
     chrome.tabs.sendMessage(tabId, {
       type: "STREAM_ERROR",
-      message: `API 오류 (${res.status})`,
+      message: res.status === 401
+        ? "Sign in required. Open the extension popup to log in."
+        : `API error (${res.status})`,
     });
     return;
   }
@@ -175,8 +196,12 @@ async function handleProcessText(msg, tabId, signal) {
     }
   } catch (e) {
     if (e.name === "AbortError") return;
-    chrome.tabs.sendMessage(tabId, { type: "STREAM_ERROR", message: "스트리밍 중 오류가 발생했습니다." });
+    chrome.tabs.sendMessage(tabId, { type: "STREAM_ERROR", message: "Streaming error. Please try again." });
     return;
+  }
+
+  if (isGuest && guestRemaining !== null) {
+    chrome.tabs.sendMessage(tabId, { type: "GUEST_REMAINING", remaining: guestRemaining });
   }
 
   chrome.tabs.sendMessage(tabId, {
@@ -194,8 +219,9 @@ async function checkGuestQuota(deviceId) {
       method: "POST",
       headers: { "x-device-id": deviceId },
     });
-    return await res.json(); // { ok: true/false, remaining: N }
+    return await res.json();
   } catch {
-    return { ok: true }; // 네트워크 오류 시 낙관적 허용 (서버에서 재차 검증)
+    return { ok: true };
   }
 }
+
