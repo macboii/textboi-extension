@@ -152,11 +152,7 @@ async function triggerProcessing(text) {
 
 function onDoubleCopy(text) {
   Bubble.remove();
-  if (isGoogleDocsLike()) {
-    MiniPopover.show(DocsModule.lastMousePos, text);
-  } else {
-    SidePanel.show(text);
-  }
+  SidePanel.show(text);
   triggerProcessing(text);
 }
 
@@ -965,18 +961,15 @@ document.addEventListener("keydown", (e) => {
 chrome.runtime.onMessage.addListener((msg) => {
   switch (msg.type) {
     case "STREAM_CHUNK":
-      if (isGoogleDocsLike()) MiniPopover.appendChunk(msg.chunk);
-      else SidePanel.appendChunk(msg.chunk);
+      SidePanel.appendChunk(msg.chunk);
       break;
 
     case "STREAM_DONE":
-      if (isGoogleDocsLike()) MiniPopover.setDone(msg.result);
-      else SidePanel.setDone(msg.result);
+      SidePanel.setDone(msg.result);
       break;
 
     case "STREAM_ERROR":
-      if (isGoogleDocsLike()) MiniPopover.setError(msg.message);
-      else SidePanel.setError(msg.message);
+      SidePanel.setError(msg.message);
       break;
 
     case "GUEST_LIMIT_REACHED":
