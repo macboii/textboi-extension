@@ -6,7 +6,7 @@
 }
 
 body {
-  width: 240px;
+  width: 280px;
   background: #ffffff;
   color: #111827;
   font-size: 13px;
@@ -53,20 +53,21 @@ body {
   line-height: 1.5;
 }
 
-.tb-settings {
+/* ── Plan section ── */
+.tb-plan-section {
   padding: 10px 14px 14px;
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 
-.tb-field {
+.tb-current-plan {
   display: flex;
-  flex-direction: column;
-  gap: 5px;
+  align-items: center;
+  justify-content: space-between;
 }
 
-.tb-label {
+.tb-current-plan-label {
   font-size: 11px;
   font-weight: 600;
   color: #6b7280;
@@ -74,42 +75,90 @@ body {
   letter-spacing: 0.04em;
 }
 
-.tb-select {
-  width: 100%;
-  padding: 6px 8px;
-  border: 1px solid #e5e7eb;
-  border-radius: 7px;
-  font-size: 12px;
-  color: #374151;
-  background: #f9fafb;
-  outline: none;
-  cursor: pointer;
+.tb-plan-badge {
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 20px;
+  padding: 2px 10px;
 }
-.tb-select:focus { border-color: #2563eb; }
 
-.tb-tabs {
+.tb-plan-badge--free {
+  background: #f3f4f6;
+  color: #374151;
+  border: 1px solid #e5e7eb;
+}
+
+.tb-plan-badge--basic {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fcd34d;
+}
+
+/* ── Plan cards ── */
+.tb-plan-cards {
   display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tb-plan-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #f9fafb;
+}
+
+.tb-plan-card--basic {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+
+.tb-plan-card-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.tb-plan-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.tb-plan-card--basic .tb-plan-name {
+  color: #1d4ed8;
+}
+
+.tb-plan-price strong {
+  font-size: 15px;
+  font-weight: 800;
+  color: #111827;
+}
+
+.tb-plan-card--basic .tb-plan-price strong {
+  color: #1d4ed8;
+}
+
+.tb-plan-per {
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.tb-plan-features {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
   gap: 4px;
 }
 
-.tb-tab {
-  flex: 1;
-  padding: 6px 0;
-  border: 1px solid #e5e7eb;
-  border-radius: 7px;
-  font-size: 12px;
-  font-weight: 500;
-  color: #6b7280;
-  background: #f9fafb;
-  cursor: pointer;
-}
-.tb-tab--active {
-  background: #eff6ff;
-  border-color: #2563eb;
-  color: #2563eb;
-  font-weight: 600;
+.tb-plan-features li {
+  font-size: 11px;
+  color: #374151;
+  line-height: 1.4;
 }
 
+/* ── Buttons ── */
 .tb-btn {
   padding: 8px 12px;
   border-radius: 8px;
@@ -136,10 +185,47 @@ body {
 }
 .tb-btn--ghost:hover { color: #374151; }
 
+.tb-btn--upgrade {
+  width: 100%;
+  margin-top: 10px;
+  background: #2563eb;
+  color: #fff;
+  font-size: 12px;
+  padding: 7px 10px;
+  border-radius: 8px;
+}
+.tb-btn--upgrade:hover { background: #1d4ed8; }
+
+/* ── Dark mode ── */
 @media (prefers-color-scheme: dark) {
   body { background: #1f2937; color: #f9fafb; }
   .tb-header { border-bottom-color: #374151; }
-  .tb-select { background: #111827; border-color: #374151; color: #f3f4f6; }
-  .tb-tab { background: #111827; border-color: #374151; color: #9ca3af; }
-  .tb-tab--active { background: #1e3a5f; border-color: #3b82f6; color: #93c5fd; }
+
+  .tb-plan-badge--free {
+    background: #374151;
+    color: #d1d5db;
+    border-color: #4b5563;
+  }
+
+  .tb-plan-badge--basic {
+    background: #78350f;
+    color: #fde68a;
+    border-color: #92400e;
+  }
+
+  .tb-plan-card {
+    background: #111827;
+    border-color: #374151;
+  }
+
+  .tb-plan-card--basic {
+    background: #1e3a5f;
+    border-color: #3b82f6;
+  }
+
+  .tb-plan-name { color: #f9fafb; }
+  .tb-plan-card--basic .tb-plan-name { color: #93c5fd; }
+  .tb-plan-price strong { color: #f9fafb; }
+  .tb-plan-card--basic .tb-plan-price strong { color: #93c5fd; }
+  .tb-plan-features li { color: #d1d5db; }
 }

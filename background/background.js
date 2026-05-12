@@ -13,7 +13,7 @@ const abortControllers = new Map();
 /* =========================
    메시지 수신
 ========================= */
-chrome.runtime.onMessage.addListener((msg, sender) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // 외부 페이지 메시지 거부 (보안)
   if (sender.id !== chrome.runtime.id) return;
 
@@ -34,6 +34,11 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
     if (!tabId) return;
     abortControllers.get(tabId)?.abort();
     abortControllers.delete(tabId);
+  }
+
+  if (msg.type === "EXPLAIN_DIFF") {
+    handleExplainDiff(msg).then(sendResponse).catch(() => sendResponse({ type: "error", message: "Explanation failed" }));
+    return true; // keep channel open for async response
   }
 });
 
@@ -208,6 +213,90 @@ async function handleProcessText(msg, tabId, signal) {
     type: "STREAM_DONE",
     result: applyTextCleanup(fullResult),
   });
+}
+
+/* =========================
+   Diff 설명 생성
+========================= */
+async function handleExplainDiff(msg) {
+  let token = await getAccessToken();
+  if (!token) token = await refreshAccessToken();
+  if (!token) return { type: "error", message: "Sign in required" };
+
+  const { diffHtml, rewritePrompt = "proofread", locale = "en-US", model = "gpt-4o-mini" } = msg;
+
+  const systemPrompt = `You are a writing assistant. Analyze the HTML diff below and explain each change made.
+
+Instruction context: ${rewritePrompt}
+
+The diff uses:
+- <del class="diff-removed"> for deleted text
+- <span class="diff-added"> for added text
+- unchanged text is plain
+
+Return ONLY a JSON object with a "changes" array (no markdown, no explanations outside JSON), where each item has:
+- "original": string (the original phrase that was changed, or "" if it was an insertion)
+- "corrected": string (the corrected phrase, or "" if it was a deletion)
+- "explanation": string (a brief explanation of why this change was made, in ${locale} language)
+
+Rules:
+- One object per distinct change.
+- Explanations must be in ${locale} language.
+- Output must be valid JSON (double quotes only, no trailing commas).
+- No markdown fences or prose outside the JSON.
+- If no changes are found, return {"changes":[]}.`.trim();
+
+  const responseFormat = {
+    type: "json_schema",
+    json_schema: {
+      name: "DiffExplanation",
+      schema: {
+        type: "object",
+        properties: {
+          changes: {
+            type: "array",
+            items: {
+              type: "object",
+              required: ["original", "corrected", "explanation"],
+              properties: {
+                original: { type: "string" },
+                corrected: { type: "string" },
+                explanation: { type: "string" },
+              },
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["changes"],
+        additionalProperties: false,
+      },
+      strict: true,
+    },
+  };
+
+  const res = await fetch(`${OPENAI_PROXY_URL}/v1/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      model,
+      stream: false,
+      temperature: 0,
+      response_format: responseFormat,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: diffHtml },
+      ],
+    }),
+  });
+
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  const data = await res.json();
+  const content = data.choices?.[0]?.message?.content ?? "{}";
+  const parsed = JSON.parse(content);
+  return { type: "success", changes: parsed.changes ?? [] };
 }
 
 /* =========================

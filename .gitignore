@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.DS_Store
+
+# 참조용 데스크탑 앱 — 커밋 제외
+textBoi_desktop/
+
+# Claude Code 내부 파일 — 커밋 제외
+CLAUDE.md
+.claude/

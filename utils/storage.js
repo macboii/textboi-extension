@@ -1,4 +1,4 @@
-import { DEFAULT_SETTINGS, LANGUAGES } from "./constants.js";
+import { DEFAULT_SETTINGS, resolveLocale } from "./constants.js";
 
 function isContextAlive() {
   try { return !!chrome.runtime?.id; } catch { return false; }
@@ -14,11 +14,7 @@ export async function getSettings() {
         // If targetLang was never explicitly saved, auto-detect from browser locale
         if (!tb_settings?.targetLang) {
           const locale = (typeof navigator !== "undefined" && navigator.language) || "en-US";
-          const match =
-            LANGUAGES.find(l => l.code === locale) ||
-            LANGUAGES.find(l => locale.startsWith(l.code.split("-")[0])) ||
-            LANGUAGES.find(l => l.code === "en");
-          merged.targetLang = match?.code || "en";
+          merged.targetLang = resolveLocale(locale);
         }
         resolve(merged);
       });

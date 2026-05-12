@@ -1,5 +1,6 @@
 import { getSettings, saveSettings } from "../utils/storage.js";
-import { DOUBLE_COPY_THRESHOLD_MS, MODELS, LANGUAGES, REWRITE_TYPES } from "../utils/constants.js";
+import { DOUBLE_COPY_THRESHOLD_MS, MODELS, LANGUAGES, SOURCE_LANGUAGES, REWRITE_TYPES, resolveLocale } from "../utils/constants.js";
+import { detectLanguage } from "../utils/langDetect.js";
 
 // ═══════════════════════════════════════════════════════
 // 전역 상태
@@ -9,6 +10,7 @@ let lastSelectionRange = null;
 let lastSelectionRect = null;
 let lastCopyAt = 0;
 let _activeDropdown = null;
+let _lastBubbleState = null; // { text, rect } — 패널 닫힐 때 버블 복원용
 
 // ═══════════════════════════════════════════════════════
 // 사이트 감지
@@ -69,6 +71,40 @@ function getIframeSelection() {
     } catch {}
   }
   return "";
+}
+
+// 선택 끝점의 정확한 rect 반환 (드래그 방향 무관 — 항상 selection end 기준)
+function getSelectionEndRect(range, frameOffset) {
+  // range를 end 지점으로 collapse → 커서 위치 rect (width≈0, height=line-height)
+  let endRect = null;
+  try {
+    const collapsed = range.cloneRange();
+    collapsed.collapse(false); // false = collapse to end
+    endRect = collapsed.getBoundingClientRect();
+  } catch {}
+
+  // collapse rect가 유효하지 않으면 getClientRects 마지막 줄로 폴백
+  if (!endRect || (endRect.width === 0 && endRect.height === 0)) {
+    const rects = Array.from(range.getClientRects()).filter(r => r.width > 0 || r.height > 0);
+    if (!rects.length) return null;
+    let last = rects[0];
+    for (const r of rects) {
+      if (r.bottom > last.bottom || (r.bottom === last.bottom && r.right > last.right)) last = r;
+    }
+    endRect = last;
+  }
+
+  if (frameOffset) {
+    return {
+      top:    endRect.top    + frameOffset.top,
+      bottom: endRect.bottom + frameOffset.top,
+      left:   endRect.left   + frameOffset.left,
+      right:  endRect.right  + frameOffset.left,
+      width:  endRect.width,
+      height: endRect.height,
+    };
+  }
+  return endRect;
 }
 
 function getSelectedTextUnified() {
@@ -154,11 +190,40 @@ function openDropdown(triggerBtn, panelEl, width = 260) {
   panelEl.querySelector(".tb-dd-search")?.focus();
 }
 
+function addKeyboardNav(searchInput, list) {
+  function visibleItems() {
+    return Array.from(list.querySelectorAll(".tb-dd-item[tabindex]"));
+  }
+  searchInput.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      const all = visibleItems();
+      if (all.length) all[0].focus();
+    }
+  });
+  list.addEventListener("keydown", (e) => {
+    const all = visibleItems();
+    const idx = all.indexOf(document.activeElement);
+    if (idx === -1) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (idx < all.length - 1) all[idx + 1].focus();
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (idx > 0) all[idx - 1].focus();
+      else searchInput.focus();
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      all[idx].dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    }
+  });
+}
+
 function buildLangDropdown(langs, currentCode, onSelect) {
   const panel = document.createElement("div");
   panel.innerHTML = `
     <div class="tb-dd-search-wrap">
-      <input class="tb-dd-search" type="text" placeholder="언어 검색..." autocomplete="off" spellcheck="false" />
+      <input class="tb-dd-search" type="text" placeholder="Search language..." autocomplete="off" spellcheck="false" />
     </div>
     <div class="tb-dd-list"></div>
   `;
@@ -175,13 +240,14 @@ function buildLangDropdown(langs, currentCode, onSelect) {
     if (filtered.length === 0) {
       const empty = document.createElement("div");
       empty.className = "tb-dd-empty";
-      empty.textContent = "결과 없음";
+      empty.textContent = "No results";
       list.appendChild(empty);
       return;
     }
     filtered.forEach(lang => {
       const item = document.createElement("div");
       item.className = "tb-dd-item" + (lang.code === currentCode ? " tb-dd-item--selected" : "");
+      item.tabIndex = -1;
       item.textContent = lang.label;
       item.addEventListener("mousedown", (e) => {
         e.preventDefault();
@@ -194,40 +260,80 @@ function buildLangDropdown(langs, currentCode, onSelect) {
 
   renderList("");
   searchInput.addEventListener("input", () => renderList(searchInput.value.trim()));
+  addKeyboardNav(searchInput, list);
   return panel;
 }
 
-function buildRewriteDropdown(types, currentId, onSelect) {
+function buildRewriteDropdown(types, currentPrompt, customPrompts, onSelect) {
   const panel = document.createElement("div");
   panel.innerHTML = `
     <div class="tb-dd-search-wrap">
-      <input class="tb-dd-search" type="text" placeholder="검색 또는 사용자 지정 프롬프트 + Enter" autocomplete="off" spellcheck="false" />
+      <input class="tb-dd-search" type="text" placeholder="Search or enter custom prompt + Enter" autocomplete="off" spellcheck="false" />
     </div>
     <div class="tb-dd-list"></div>
   `;
 
   const searchInput = panel.querySelector(".tb-dd-search");
   const list = panel.querySelector(".tb-dd-list");
+  const currentId = types.find(t => t.prompt === currentPrompt)?.id || types.find(t => t.id === currentPrompt)?.id;
 
   function renderList(filter) {
     const q = filter.toLowerCase();
+    list.innerHTML = "";
+
+    // Custom prompts section
+    const matchedCustom = q
+      ? customPrompts.filter(p => p.toLowerCase().includes(q))
+      : customPrompts;
+
+    if (matchedCustom.length > 0) {
+      const header = document.createElement("div");
+      header.className = "tb-dd-section-header";
+      header.textContent = "Custom";
+      list.appendChild(header);
+
+      matchedCustom.forEach(p => {
+        const item = document.createElement("div");
+        item.className = "tb-dd-item" + (p === currentPrompt ? " tb-dd-item--selected" : "");
+        item.tabIndex = -1;
+        item.title = p;
+        const labelEl = document.createElement("div");
+        labelEl.className = "tb-dd-item-label";
+        labelEl.textContent = "✏️ " + _truncateLabel(p, 36);
+        item.appendChild(labelEl);
+        item.addEventListener("mousedown", (e) => {
+          e.preventDefault();
+          onSelect(null, p, p);
+          closeActiveDropdown();
+        });
+        list.appendChild(item);
+      });
+
+      const divider = document.createElement("div");
+      divider.className = "tb-dd-section-divider";
+      list.appendChild(divider);
+    }
+
+    // Predefined types
     const filtered = q
       ? types.filter(t =>
           t.label.toLowerCase().includes(q) ||
           (t.description || "").toLowerCase().includes(q)
         )
       : types;
-    list.innerHTML = "";
-    if (filtered.length === 0) {
+
+    if (filtered.length === 0 && matchedCustom.length === 0) {
       const empty = document.createElement("div");
       empty.className = "tb-dd-empty";
-      empty.textContent = "결과 없음";
+      empty.textContent = "No results";
       list.appendChild(empty);
       return;
     }
+
     filtered.forEach(type => {
       const item = document.createElement("div");
       item.className = "tb-dd-item tb-dd-item--rich" + (type.id === currentId ? " tb-dd-item--selected" : "");
+      item.tabIndex = -1;
       const labelEl = document.createElement("div");
       labelEl.className = "tb-dd-item-label";
       labelEl.textContent = type.label;
@@ -249,14 +355,221 @@ function buildRewriteDropdown(types, currentId, onSelect) {
 
   renderList("");
   searchInput.addEventListener("input", () => renderList(searchInput.value.trim()));
-  searchInput.addEventListener("keydown", (e) => {
+  searchInput.addEventListener("keydown", async (e) => {
     if (e.key === "Enter") {
       const custom = searchInput.value.trim();
-      if (custom) { e.preventDefault(); onSelect(null, "✏️ Custom", custom); closeActiveDropdown(); }
+      if (custom) {
+        e.preventDefault();
+        await addCustomRewritePrompt(custom);
+        onSelect(null, custom, custom);
+        closeActiveDropdown();
+      }
     }
   });
+  addKeyboardNav(searchInput, list);
   return panel;
 }
+
+// ═══════════════════════════════════════════════════════
+// Diff renderer (ported from textBoi_desktop/src/renderer/diffRenderer.ts)
+// ═══════════════════════════════════════════════════════
+
+import DiffMatchPatch from "diff-match-patch";
+
+function _escapeHtml(text) {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function _isCJK(text) {
+  const count = (text.match(/[　-鿿가-힯]/g) || []).length;
+  return text.length > 0 && count / text.length > 0.2;
+}
+
+function _wordLevelDiff(dmp, text1, text2) {
+  const tokenize = (t) => t.split(/(\s+)/).filter(s => s.length > 0);
+  const tokens1 = tokenize(text1);
+  const tokens2 = tokenize(text2);
+  const tokenToChar = new Map();
+  let charCode = 0xE000;
+  const encode = (token) => {
+    if (!tokenToChar.has(token)) tokenToChar.set(token, String.fromCodePoint(charCode++));
+    return tokenToChar.get(token);
+  };
+  const enc1 = tokens1.map(encode).join("");
+  const enc2 = tokens2.map(encode).join("");
+  const charDiffs = dmp.diff_main(enc1, enc2, false);
+  const charToToken = new Map([...tokenToChar.entries()].map(([k, v]) => [v, k]));
+  return charDiffs.map(([op, chars]) => {
+    const words = [...chars].map(c => charToToken.get(c) ?? "");
+    return [op, words.join("")];
+  });
+}
+
+function _charLevelDiff(dmp, text1, text2) {
+  const diffs = dmp.diff_main(text1, text2, false);
+  dmp.diff_cleanupSemantic(diffs);
+  return diffs;
+}
+
+function generateDiffHtml(original, corrected) {
+  const dmp = new DiffMatchPatch();
+  const orig = original.trim();
+  const corr = corrected.trim();
+
+  const diffs = (_isCJK(orig) || _isCJK(corr))
+    ? _charLevelDiff(dmp, orig, corr)
+    : _wordLevelDiff(dmp, orig, corr);
+
+  const groups = [[]];
+
+  for (const [op, text] of diffs) {
+    if (op === -1) {
+      groups[groups.length - 1].push([op, text]);
+      continue;
+    }
+    const segments = text.split(/(?<=[.!?])(?=\s)|(?<=[。！？\n])/);
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i];
+      if (seg.length > 0) groups[groups.length - 1].push([op, seg]);
+      if (i < segments.length - 1) groups.push([]);
+    }
+    const lastSeg = segments[segments.length - 1];
+    if (/[.!?。！？]$/.test(lastSeg.trimEnd())) groups.push([]);
+  }
+
+  if (groups[groups.length - 1].length === 0) groups.pop();
+
+  let html = "";
+  for (const group of groups) {
+    if (group.length === 0) continue;
+    const diffHtml = group.map(([op, text]) => {
+      if (op === 1) return `<span class="diff-added">${_escapeHtml(text)}</span>`;
+      if (op === -1) return `<del class="diff-removed">${_escapeHtml(text)}</del>`;
+      return _escapeHtml(text);
+    }).join("");
+    if (!diffHtml.trim()) continue;
+    const hasChange = diffHtml.includes("<del") || diffHtml.includes('<span class="diff-added"');
+    const correctedSentence = group.filter(([op]) => op !== -1).map(([, t]) => t).join("");
+    html += `<div class="diff-line"><span class="diff-sentence">${diffHtml}</span>${
+      hasChange ? `<button class="idea-icon" data-sentence="${_escapeHtml(correctedSentence.trim())}" title="Explain this change">💡</button>` : ""
+    }</div>`;
+  }
+
+  return html || `<div class="diff-line"><span class="diff-sentence">${_escapeHtml(corr)}</span></div>`;
+}
+
+// ═══════════════════════════════════════════════════════
+// ExplainPopup — 💡 클릭 시 변경 설명 팝업
+// ═══════════════════════════════════════════════════════
+
+const ExplainPopup = {
+  el: null,
+  _outsideHandler: null,
+
+  async show(iconEl, diffHtml, rewritePrompt) {
+    this.remove();
+    if (!isContextAlive()) return;
+
+    const popup = document.createElement("div");
+    popup.className = "tb-explain-popup";
+    popup.innerHTML = `<div class="tb-explain-loading"><span class="tb-explain-spinner"></span> Analyzing changes…</div>`;
+    document.body.appendChild(popup);
+    this.el = popup;
+    this._positionNear(popup, iconEl);
+
+    this._outsideHandler = (e) => {
+      if (popup.contains(e.target)) return;
+      if (e.target.classList?.contains("idea-icon")) return;
+      this.remove();
+    };
+    document.addEventListener("mousedown", this._outsideHandler, true);
+
+    try {
+      const locale = navigator.language || "en-US";
+      const settings = await getSettings();
+      const model = settings.model || "gpt-4o-mini";
+
+      const response = await new Promise((resolve, reject) => {
+        try {
+          chrome.runtime.sendMessage(
+            { type: "EXPLAIN_DIFF", diffHtml, rewritePrompt, locale, model },
+            (res) => {
+              if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+              else resolve(res);
+            }
+          );
+        } catch (e) { reject(e); }
+      });
+
+      if (!this.el) return;
+      if (response?.type === "success" && response.changes?.length > 0) {
+        this._render(response.changes);
+      } else if (response?.type === "error" && response.message?.toLowerCase().includes("sign in")) {
+        popup.innerHTML = `<div class="tb-explain-error">Sign in required to use explanations.</div>`;
+      } else {
+        popup.innerHTML = `<div class="tb-explain-error">No explanation available for this change.</div>`;
+      }
+    } catch (err) {
+      if (this.el) {
+        const msg = err?.message?.includes("Extension context") || err?.message?.includes("port closed")
+          ? "Extension reloaded — please refresh the page."
+          : "Explanation failed. Please try again.";
+        this.el.innerHTML = `<div class="tb-explain-error">${msg}</div>`;
+      }
+    }
+  },
+
+  _positionNear(popup, iconEl) {
+    const rect = iconEl.getBoundingClientRect();
+    const pw = 320;
+    let left = rect.right + 8;
+    if (left + pw > window.innerWidth - 8) left = rect.left - pw - 8;
+    if (left < 8) left = 8;
+
+    Object.assign(popup.style, {
+      position: "fixed",
+      width: pw + "px",
+      left: left + "px",
+      zIndex: "2147483648",
+    });
+
+    const maxH = 320;
+    if (rect.top + maxH > window.innerHeight - 8) {
+      popup.style.bottom = (window.innerHeight - rect.bottom) + "px";
+      popup.style.top = "auto";
+      popup.style.maxHeight = (rect.bottom - 8) + "px";
+    } else {
+      popup.style.top = rect.top + "px";
+      popup.style.bottom = "auto";
+      popup.style.maxHeight = (window.innerHeight - rect.top - 8) + "px";
+    }
+  },
+
+  _render(changes) {
+    if (!this.el) return;
+    this.el.innerHTML = changes.map((c) => `
+      <div class="tb-explain-entry">
+        ${c.original ? `<div class="tb-exp-original">${_escapeHtml(c.original)}</div>` : ""}
+        ${c.corrected ? `<div class="tb-exp-corrected">→ ${_escapeHtml(c.corrected)}</div>` : ""}
+        <div class="tb-exp-text">${_escapeHtml(c.explanation)}</div>
+      </div>
+    `).join("");
+  },
+
+  remove() {
+    if (this._outsideHandler) {
+      document.removeEventListener("mousedown", this._outsideHandler, true);
+      this._outsideHandler = null;
+    }
+    this.el?.remove();
+    this.el = null;
+  },
+};
 
 // ═══════════════════════════════════════════════════════
 // Toast
@@ -286,6 +599,33 @@ function isContextAlive() {
   try { return !!chrome.runtime?.id; } catch { return false; }
 }
 
+function _truncateLabel(text, maxLen = 24) {
+  return text.length <= maxLen ? text : text.slice(0, maxLen - 1) + "…";
+}
+
+async function getCustomRewritePrompts() {
+  if (!isContextAlive()) return [];
+  return new Promise((resolve) => {
+    try {
+      chrome.storage.local.get("tb_custom_rewrites", ({ tb_custom_rewrites }) => {
+        resolve(Array.isArray(tb_custom_rewrites) ? tb_custom_rewrites : []);
+      });
+    } catch { resolve([]); }
+  });
+}
+
+async function addCustomRewritePrompt(text) {
+  if (!isContextAlive()) return;
+  const existing = await getCustomRewritePrompts();
+  const filtered = existing.filter(p => p !== text);
+  const updated = [text, ...filtered].slice(0, 5);
+  return new Promise((resolve) => {
+    try {
+      chrome.storage.local.set({ tb_custom_rewrites: updated }, resolve);
+    } catch { resolve(); }
+  });
+}
+
 // Suppress "Extension context invalidated" unhandled rejections
 // (occurs when extension reloads while content script is still alive)
 window.addEventListener("unhandledrejection", (event) => {
@@ -297,6 +637,12 @@ window.addEventListener("unhandledrejection", (event) => {
 async function triggerProcessing(text) {
   try {
     if (!isContextAlive()) return;
+
+    if (!navigator.onLine) {
+      SidePanel.setError("No internet connection. Please check your network and try again.");
+      return;
+    }
+
     const settings = await getSettings();
     chrome.runtime.sendMessage({
       type: "PROCESS_TEXT",
@@ -309,9 +655,18 @@ async function triggerProcessing(text) {
   } catch {}
 }
 
-function onDoubleCopy(text) {
+// 처리 중 네트워크가 끊기면 스피너 대신 에러 표시
+window.addEventListener("offline", () => {
+  if (SidePanel.state === "loading" || SidePanel.state === "streaming") {
+    SidePanel.setError("Connection lost. Please check your network and try again.");
+  }
+});
+
+async function onDoubleCopy(text) {
   Bubble.remove();
-  SidePanel.show(text);
+  SidePanel._resultCache = null; // 이중복사는 항상 새 결과 요청
+  await SidePanel.show(text);
+  SidePanel.startSpinner();
   triggerProcessing(text);
 }
 
@@ -322,8 +677,12 @@ function onDoubleCopy(text) {
 const SidePanel = {
   el: null,
   state: null,
+  _outsideClickHandler: null,
   currentResult: "",
   originalText: "",
+  _currentMode: "translate",
+  _currentRewritePrompt: "",
+  _resultCache: null, // { text, result, isDiff, diffHtml } — 패널 재오픈 시 복원용
 
   async show(text) {
     try {
@@ -340,10 +699,28 @@ const SidePanel = {
       this._position();
 
       this.el.querySelector(".tb-original").value = text;
+      this._updateSourceLang(text);
 
       const settings = await getSettings();
       this._populateSelects(settings);
       this._bindEvents(settings);
+
+      // 동일 텍스트 캐시 복원 (버블 클릭으로 재오픈 시 이전 결과 유지)
+      const cache = this._resultCache;
+      if (cache?.text === text && cache.result) {
+        const resultEl = this.el.querySelector(".tb-result");
+        if (resultEl) {
+          if (cache.isDiff && cache.diffHtml) {
+            resultEl.innerHTML = cache.diffHtml;
+          } else {
+            resultEl.textContent = cache.result;
+          }
+        }
+        this.currentResult = cache.result;
+        this.state = "done";
+        this.el.querySelector(".tb-replace-btn")?.removeAttribute("disabled");
+        this.el.querySelector(".tb-empty-guide")?.remove();
+      }
 
       requestAnimationFrame(() => this.el?.classList.add("tb-panel--open"));
     } catch (e) {
@@ -354,7 +731,7 @@ const SidePanel = {
   _position() {
     const W = 522, margin = 24;
     const vw = window.innerWidth, vh = window.innerHeight;
-    const panelH = Math.min(720, vh - margin * 2);
+    const panelH = Math.min(880, vh - margin * 2);
     const left = vw - W - margin;
     const top = Math.max(margin, (vh - panelH) / 2);
 
@@ -372,6 +749,8 @@ const SidePanel = {
     const resultEl = this.el.querySelector(".tb-result");
     if (resultEl) resultEl.textContent = this.currentResult;
     this.el.querySelector(".tb-empty-guide")?.remove();
+    const sp = this.el.querySelector(".tb-spinner");
+    if (sp) sp.style.setProperty("display", "none", "important");
   },
 
   setDone(result) {
@@ -379,10 +758,33 @@ const SidePanel = {
     this.state = "done";
     this.currentResult = result;
     const resultEl = this.el.querySelector(".tb-result");
-    if (resultEl) resultEl.textContent = result;
+    const isDiffMode = this._currentMode === "correct" && this._isDiffRewritePrompt();
+    if (resultEl) {
+      if (isDiffMode && this.originalText) {
+        resultEl.innerHTML = generateDiffHtml(this.originalText, result);
+      } else {
+        resultEl.textContent = result;
+      }
+    }
+    // 캐시 저장 — 버블 클릭으로 재오픈 시 복원
+    this._resultCache = {
+      text: this.originalText,
+      result,
+      isDiff: isDiffMode,
+      diffHtml: isDiffMode ? (resultEl?.innerHTML || "") : null,
+    };
     this.el.querySelector(".tb-replace-btn")?.removeAttribute("disabled");
-    this.el.querySelector(".tb-spinner")?.remove();
+    const sp = this.el.querySelector(".tb-spinner");
+    if (sp) sp.style.setProperty("display", "none", "important");
     this.el.querySelector(".tb-empty-guide")?.remove();
+  },
+
+  _isDiffRewritePrompt() {
+    const p = this._currentRewritePrompt || "";
+    // stored as id (default) or as full prompt text (after user picks from dropdown)
+    if (p === "proofread" || p === "improve") return true;
+    const matched = REWRITE_TYPES.find(r => r.prompt === p);
+    return matched?.id === "proofread" || matched?.id === "improve";
   },
 
   setError(message) {
@@ -393,7 +795,8 @@ const SidePanel = {
       resultEl.textContent = message || "An error occurred.";
       resultEl.classList.add("tb-result--error");
     }
-    this.el.querySelector(".tb-spinner")?.remove();
+    const sp = this.el.querySelector(".tb-spinner");
+    if (sp) sp.style.setProperty("display", "none", "important");
   },
 
   showLoginPrompt() {
@@ -414,14 +817,41 @@ const SidePanel = {
     banner.style.display = "";
   },
 
+  startSpinner() {
+    if (!this.el) return;
+    const wrap = this.el.querySelector(".tb-result-wrap");
+    if (!wrap) return;
+    const existing = wrap.querySelector(".tb-spinner");
+    if (existing) {
+      existing.style.removeProperty("display");
+    } else {
+      const sp = document.createElement("div");
+      sp.className = "tb-spinner";
+      wrap.prepend(sp);
+    }
+  },
+
   remove() {
     closeActiveDropdown();
+    ExplainPopup.remove();
+    if (this._outsideClickHandler) {
+      document.removeEventListener("mousedown", this._outsideClickHandler, true);
+      this._outsideClickHandler = null;
+    }
     if (this.el) {
       this.el.classList.remove("tb-panel--open");
       const el = this.el;
-      setTimeout(() => el.remove(), 220);
+      const savedBubble = _lastBubbleState; // 클로저로 캡처
+      setTimeout(() => {
+        el.remove();
+        // 패널 닫힌 후 버블 복원 (새 버블이 없고, 새 패널도 없을 때만)
+        if (savedBubble && !SidePanel.el && !Bubble.el && isContextAlive()) {
+          Bubble.show(savedBubble.rect, savedBubble.text);
+        }
+      }, 220);
       this.el = null;
     }
+    if (!isContextAlive()) return;
     try {
       chrome.runtime.sendMessage({ type: "ABORT_STREAM" }).catch(() => {});
     } catch {}
@@ -459,7 +889,14 @@ const SidePanel = {
           <button class="tb-source-lang-btn tb-lang-trigger">🌐 Auto-detect ▾</button>
         </div>
         <div class="tb-text-box">
-          <textarea class="tb-original" placeholder="Selected text appears here..."></textarea>
+          <textarea class="tb-original" placeholder="Selected text appears here..." maxlength="10000"></textarea>
+          <div class="tb-original-footer">
+            <span class="tb-char-count">0 / 10,000</span>
+            <div class="tb-original-actions">
+              <button class="tb-clear-btn" aria-label="Clear input">✕</button>
+              <button class="tb-submit-btn" aria-label="Run">⬇</button>
+            </div>
+          </div>
         </div>
       </div>
       <div class="tb-divider"></div>
@@ -470,16 +907,15 @@ const SidePanel = {
         </div>
         <div class="tb-text-box">
           <div class="tb-result-wrap">
-            <div class="tb-spinner"></div>
             <div class="tb-result"></div>
             <div class="tb-empty-guide">
               <div class="tb-empty-shortcut">
                 <span class="tb-kbd">${mod}</span><span class="tb-kbd">C+C</span>
-                <span class="tb-empty-desc">선택한 텍스트 두 번 복사로 불러오기</span>
+                <span class="tb-empty-desc">Double-copy selected text to load</span>
               </div>
               <div class="tb-empty-shortcut">
                 <span class="tb-kbd">${mod}</span><span class="tb-kbd">↵</span>
-                <span class="tb-empty-desc">결과를 원문에 바로 적용</span>
+                <span class="tb-empty-desc">Apply result to original text</span>
               </div>
             </div>
           </div>
@@ -487,9 +923,19 @@ const SidePanel = {
       </div>
       <div class="tb-footer">
         <button class="tb-retry-btn" aria-label="Retry">↺</button>
-        <button class="tb-replace-btn" disabled>Apply <kbd>⌘↵</kbd></button>
+        <button class="tb-replace-btn" disabled>Apply <kbd>${mod}↵</kbd></button>
       </div>
     `;
+  },
+
+  _updateSourceLang(text) {
+    if (!this.el || !text || text.trim().length < 5) return;
+    const btn = this.el.querySelector(".tb-source-lang-btn");
+    if (!btn) return;
+    const code = detectLanguage(text);
+    if (!code || code === "unknown") return;
+    const lang = SOURCE_LANGUAGES.find(l => l.code === code);
+    if (lang) btn.textContent = lang.label + " ▾";
   },
 
   _updateModelDot(modelId) {
@@ -505,6 +951,9 @@ const SidePanel = {
   },
 
   _populateSelects(settings) {
+    this._currentMode = settings.mode || "translate";
+    this._currentRewritePrompt = settings.rewritePrompt || "";
+
     const modelSel = this.el.querySelector(".tb-model-select");
     if (modelSel) {
       modelSel.value = settings.model;
@@ -521,8 +970,13 @@ const SidePanel = {
     if (rewriteBtn) {
       const matchedByPrompt = REWRITE_TYPES.find(r => r.prompt === settings.rewritePrompt);
       const matchedById = REWRITE_TYPES.find(r => r.id === settings.rewritePrompt);
-      const type = matchedByPrompt || matchedById || REWRITE_TYPES[0];
-      rewriteBtn.textContent = type.label + " ▾";
+      if (matchedByPrompt || matchedById) {
+        rewriteBtn.textContent = (matchedByPrompt || matchedById).label + " ▾";
+      } else if (settings.rewritePrompt) {
+        rewriteBtn.textContent = "✏️ " + _truncateLabel(settings.rewritePrompt) + " ▾";
+      } else {
+        rewriteBtn.textContent = REWRITE_TYPES[0].label + " ▾";
+      }
     }
 
     this.el.querySelectorAll(".tb-mode-btn").forEach((btn) => {
@@ -549,20 +1003,22 @@ const SidePanel = {
       btn.addEventListener("click", async () => {
         if (btn.dataset.mode === settings.mode) return;
         closeActiveDropdown();
+        ExplainPopup.remove();
         this.el.querySelectorAll(".tb-mode-btn").forEach((b) => b.classList.remove("tb-mode-btn--active"));
         btn.classList.add("tb-mode-btn--active");
         settings.mode = btn.dataset.mode;
+        this._currentMode = settings.mode;
         this._switchMode(settings.mode);
         await saveSettings({ mode: settings.mode });
-        this._rerun(settings);
       });
     });
 
-    // Source language dropdown
+    // Source language dropdown — simple codes (no regional variants)
     this.el.querySelector(".tb-source-lang-btn").addEventListener("click", (e) => {
       e.stopPropagation();
       const btn = e.currentTarget;
-      const panelEl = buildLangDropdown(LANGUAGES, null, (code, label) => {
+      const currentCode = SOURCE_LANGUAGES.find(l => btn.textContent.startsWith(l.label))?.code || null;
+      const panelEl = buildLangDropdown(SOURCE_LANGUAGES, currentCode, (code, label) => {
         btn.textContent = label + " ▾";
       });
       openDropdown(btn, panelEl, 240);
@@ -581,15 +1037,15 @@ const SidePanel = {
     });
 
     // Rewrite style dropdown
-    this.el.querySelector(".tb-rewrite-btn").addEventListener("click", (e) => {
+    this.el.querySelector(".tb-rewrite-btn").addEventListener("click", async (e) => {
       e.stopPropagation();
       const btn = e.currentTarget;
-      const matchedByPrompt = REWRITE_TYPES.find(r => r.prompt === settings.rewritePrompt);
-      const matchedById = REWRITE_TYPES.find(r => r.id === settings.rewritePrompt);
-      const currentId = (matchedByPrompt || matchedById || REWRITE_TYPES[0]).id;
-      const panelEl = buildRewriteDropdown(REWRITE_TYPES, currentId, async (id, label, prompt) => {
+      const customPrompts = await getCustomRewritePrompts();
+      const panelEl = buildRewriteDropdown(REWRITE_TYPES, settings.rewritePrompt || "", customPrompts, async (id, label, prompt) => {
         settings.rewritePrompt = prompt;
-        btn.textContent = label + " ▾";
+        this._currentRewritePrompt = prompt;
+        const btnLabel = id ? label : ("✏️ " + _truncateLabel(prompt));
+        btn.textContent = btnLabel + " ▾";
         await saveSettings({ rewritePrompt: prompt });
       });
       openDropdown(btn, panelEl, 280);
@@ -607,17 +1063,99 @@ const SidePanel = {
 
     this.el.querySelector(".tb-retry-btn").addEventListener("click", () => this._rerun(settings));
 
-    this.el.querySelector(".tb-original").addEventListener("keydown", (e) => {
+    this.el.querySelector(".tb-submit-btn").addEventListener("click", () => this._rerun(settings));
+
+    this.el.querySelector(".tb-clear-btn").addEventListener("click", () => {
+      this._resultCache = null; // clear 시 캐시 무효화
+      ExplainPopup.remove();
+      // clear top textarea
+      const ta = this.el.querySelector(".tb-original");
+      if (ta) {
+        ta.value = "";
+        ta.dispatchEvent(new Event("input"));
+        ta.focus();
+      }
+      // clear bottom result
+      const resultEl = this.el.querySelector(".tb-result");
+      if (resultEl) {
+        resultEl.textContent = "";
+        resultEl.classList.remove("tb-result--error");
+      }
+      // remove spinner if present
+      this.el.querySelector(".tb-spinner")?.remove();
+      // restore empty guide
+      const wrap = this.el.querySelector(".tb-result-wrap");
+      if (wrap && !wrap.querySelector(".tb-empty-guide")) {
+        const mod = /mac/i.test(navigator.platform) ? "⌘" : "Ctrl";
+        const guide = document.createElement("div");
+        guide.className = "tb-empty-guide";
+        guide.innerHTML = `
+          <div class="tb-empty-shortcut">
+            <span class="tb-kbd">${mod}</span><span class="tb-kbd">C+C</span>
+            <span class="tb-empty-desc">Double-copy selected text to load</span>
+          </div>
+          <div class="tb-empty-shortcut">
+            <span class="tb-kbd">${mod}</span><span class="tb-kbd">↵</span>
+            <span class="tb-empty-desc">Apply result to original text</span>
+          </div>
+        `;
+        wrap.appendChild(guide);
+      }
+      // disable apply button and reset state
+      this.el.querySelector(".tb-replace-btn")?.setAttribute("disabled", "");
+      this.state = null;
+      this.currentResult = "";
+      // abort any in-progress streaming
+      if (isContextAlive()) chrome.runtime.sendMessage({ type: "ABORT_STREAM" }).catch(() => {});
+    });
+
+    const originalEl = this.el.querySelector(".tb-original");
+    const charCountEl = this.el.querySelector(".tb-char-count");
+
+    const updateCharCount = () => {
+      const len = originalEl.value.length;
+      charCountEl.textContent = `${len.toLocaleString()} / 10,000`;
+      charCountEl.classList.toggle("tb-char-count--warn", len >= 9000);
+    };
+    updateCharCount();
+
+    originalEl.addEventListener("input", updateCharCount);
+
+    originalEl.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         this._rerun(settings);
       }
     });
+
+    // 💡 idea icon click → ExplainPopup
+    const resultEl = this.el.querySelector(".tb-result");
+    if (resultEl) {
+      resultEl.addEventListener("click", (e) => {
+        const icon = e.target.closest(".idea-icon");
+        if (!icon || !isContextAlive()) return;
+        e.stopPropagation();
+        const sentenceEl = icon.previousElementSibling;
+        const diffHtml = sentenceEl?.innerHTML?.trim() || "";
+        ExplainPopup.show(icon, diffHtml, this._currentRewritePrompt);
+      });
+    }
+
+    this._outsideClickHandler = (e) => {
+      if (!this.el) return;
+      if (this.el.contains(e.target)) return;
+      if (e.target.closest?.(".tb-dd-panel")) return;
+      this.remove();
+    };
+    document.addEventListener("mousedown", this._outsideClickHandler, true);
   },
 
   _rerun(settings) {
     const text = this.el?.querySelector(".tb-original")?.value?.trim();
     if (!text || !isContextAlive()) return;
+    this._resultCache = null; // 재실행 시 캐시 무효화
+    this._updateSourceLang(text);
+    ExplainPopup.remove();
 
     this.state = "loading";
     this.currentResult = "";
@@ -629,7 +1167,10 @@ const SidePanel = {
     this.el.querySelector(".tb-replace-btn")?.setAttribute("disabled", "");
 
     const spinnerWrap = this.el.querySelector(".tb-result-wrap");
-    if (spinnerWrap && !spinnerWrap.querySelector(".tb-spinner")) {
+    const existingSp = spinnerWrap?.querySelector(".tb-spinner");
+    if (existingSp) {
+      existingSp.style.removeProperty("display");
+    } else if (spinnerWrap) {
       const spinner = document.createElement("div");
       spinner.className = "tb-spinner";
       spinnerWrap.prepend(spinner);
@@ -716,6 +1257,7 @@ const MiniPopover = {
     this.el?.remove();
     this.el = null;
     this.state = null;
+    if (!isContextAlive()) return;
     try {
       chrome.runtime.sendMessage({ type: "ABORT_STREAM" }).catch(() => {});
     } catch {}
@@ -731,6 +1273,10 @@ const MiniPopover = {
 
     // 외부 클릭 닫기
     const onOutside = (e) => {
+      if (!isContextAlive()) {
+        document.removeEventListener("mousedown", onOutside, true);
+        return;
+      }
       if (this.el && !this.el.contains(e.target)) {
         this.remove();
         document.removeEventListener("mousedown", onOutside, true);
@@ -748,12 +1294,14 @@ const Bubble = {
   el: null,
 
   show(rect, text) {
+    if (!isContextAlive()) return;
     this.remove();
 
     this.el = document.createElement("div");
     this.el.id = "textboi-bubble";
 
-    const iconUrl = chrome.runtime.getURL("icons/icon48.png");
+    let iconUrl;
+    try { iconUrl = chrome.runtime.getURL("icons/icon48.png"); } catch { return; }
     const img = document.createElement("img");
     img.src = iconUrl;
     img.style.cssText = "width:100% !important; height:100% !important; object-fit:cover !important; border-radius:50% !important; display:block !important; pointer-events:none !important;";
@@ -773,7 +1321,17 @@ const Bubble = {
       e.preventDefault();
       e.stopPropagation();
       Bubble.remove();
-      SidePanel.show(text);
+      if (SidePanel.el) {
+        // 패널 이미 열려있으면 textarea만 업데이트
+        const ta = SidePanel.el.querySelector(".tb-original");
+        if (ta) {
+          ta.value = text;
+          ta.dispatchEvent(new Event("input"));
+          SidePanel._updateSourceLang(text);
+        }
+      } else {
+        SidePanel.show(text);
+      }
     });
 
     document.body.appendChild(this.el);
@@ -922,6 +1480,7 @@ async function replaceSelectedTextInGoogleDocs(newText) {
 
 // copy 이벤트 핸들러 (document + iframe 공유)
 function _handleCopyEvent() {
+  if (!isContextAlive()) return;
   const now = Date.now();
   const text = getSelectedTextUnified();
   if ((now - lastCopyAt) < DOUBLE_COPY_THRESHOLD_MS && text) {
@@ -934,8 +1493,8 @@ function _handleCopyEvent() {
   }
 }
 
-// mouseup 핸들러 (document + iframe 공유)
-function _handleMouseUp() {
+// 선택 텍스트와 마지막 줄 rect를 구해 Bubble 표시 (mouseup / selectionchange 공용)
+function _showBubbleForSelection() {
   // 1. 메인 document selection
   const sel = window.getSelection();
   let text = sel?.toString().trim() ?? "";
@@ -943,7 +1502,7 @@ function _handleMouseUp() {
 
   if (text && sel.rangeCount > 0) {
     lastSelectionRange = sel.getRangeAt(0).cloneRange();
-    try { rect = sel.getRangeAt(0).getBoundingClientRect(); } catch {}
+    rect = getSelectionEndRect(sel.getRangeAt(0));
   }
 
   // 2. iframe selection (Gmail compose 등)
@@ -955,26 +1514,25 @@ function _handleMouseUp() {
         if (iText && iSel.rangeCount > 0) {
           text = iText;
           lastSelectionRange = iSel.getRangeAt(0).cloneRange();
-          const iRect = iSel.getRangeAt(0).getBoundingClientRect();
           const fRect = frame.getBoundingClientRect();
-          rect = {
-            top: iRect.top + fRect.top,
-            bottom: iRect.bottom + fRect.top,
-            left: iRect.left + fRect.left,
-            right: iRect.right + fRect.left,
-            width: iRect.width,
-            height: iRect.height,
-          };
+          rect = getSelectionEndRect(iSel.getRangeAt(0), { top: fRect.top, left: fRect.left });
           break;
         }
       } catch {}
     }
   }
 
-  if (!text) return Bubble.remove();
+  if (!text) { Bubble.remove(); _lastBubbleState = null; return; }
   if (rect) lastSelectionRect = rect;
-  if (!lastSelectionRect?.width && !lastSelectionRect?.height) return;
+  if (!lastSelectionRect) return;
+  _lastBubbleState = { text, rect: lastSelectionRect }; // 버블 상태 저장
   Bubble.show(lastSelectionRect, text);
+}
+
+// mouseup 핸들러
+function _handleMouseUp() {
+  if (!isContextAlive()) return;
+  _showBubbleForSelection();
 }
 
 // Gmail iframe에 이벤트 리스너 부착
@@ -986,16 +1544,47 @@ function _attachIframeListeners() {
       if (!doc || !doc.body) continue;
       // capture phase: Gmail이 stopPropagation 하더라도 먼저 받음
       doc.addEventListener("copy", _handleCopyEvent, true);
-      doc.addEventListener("mouseup", _handleMouseUp);
       doc.addEventListener("mousedown", () => Bubble.remove());
+      doc.addEventListener("mouseup", _handleMouseUp);
       frame._tbAttached = true;
     } catch {}
   }
 }
 
 function initCopyDetector() {
-  document.addEventListener("mousedown", () => Bubble.remove());
-  document.addEventListener("mouseup", _handleMouseUp);
+  let _isMouseDown = false;
+
+  document.addEventListener("mousedown", (e) => {
+    _isMouseDown = true;
+    // 패널/드롭다운/버블/팝업 클릭은 새 선택이 아님 — lastBubbleState 유지
+    if (
+      e.target.closest?.("#textboi-panel") ||
+      e.target.closest?.(".tb-dd-panel") ||
+      e.target.closest?.(".tb-explain-popup") ||
+      e.target.closest?.("#textboi-bubble")
+    ) return;
+    Bubble.remove();
+    _lastBubbleState = null; // 페이지 컨텐츠 클릭 = 새 선택 시작, 이전 버블 무효화
+  });
+  document.addEventListener("mouseup", () => {
+    _isMouseDown = false;
+    _handleMouseUp();
+  });
+
+  // 키보드 선택 감지 — 마우스 드래그 중엔 무시
+  let _selTimer = null;
+  document.addEventListener("selectionchange", () => {
+    if (_isMouseDown) return;            // 드래그 중 → mouseup에서 처리
+    clearTimeout(_selTimer);
+    _selTimer = setTimeout(() => {
+      if (!isContextAlive()) return;
+      if (document.activeElement?.closest?.("#textboi-panel")) return;
+      const sel = window.getSelection();
+      const text = sel?.toString().trim() ?? "";
+      if (text.length < 2) { Bubble.remove(); return; }
+      _showBubbleForSelection();
+    }, 250);
+  });
 
   // capture phase로 등록 → Gmail이 copy 이벤트를 막아도 먼저 수신
   document.addEventListener("copy", _handleCopyEvent, true);
@@ -1014,74 +1603,168 @@ function initCopyDetector() {
 // ═══════════════════════════════════════════════════════
 
 const DocsModule = {
-  lastMousePos: { x: 0, y: 0 },
-  isMouseDown: false,
-  dragDistance: 0,
-  startPos: { x: 0, y: 0 },
+  _lastMousePos: null,   // 키보드 선택 시 버블 위치 기준
+  _pendingText: "",      // mouseup에서 미리 복사한 텍스트 (버블 클릭 시 재사용)
+  _skipNextMouseup: false, // 버블 클릭 후 mouseup이 새 버블을 만드는 것을 방지
+
+  // Docs 선택 영역을 클립보드에 쓰고 readText()로 읽음
+  // Docs는 Cmd+C keydown(iframe)에 반응해 클립보드에 씀
+  // execCommand("copy")를 부모 doc + iframe doc 양쪽에 시도 → 어느 쪽이든 Docs 핸들러가 반응하면 성공
+  async _execCopyAndCapture() {
+    try { document.execCommand("copy"); } catch {}
+    try {
+      const iframe = document.querySelector("iframe.docs-texteventtarget-iframe");
+      if (iframe?.contentDocument) iframe.contentDocument.execCommand("copy");
+    } catch {}
+    try { return (await navigator.clipboard.readText()).trim(); } catch {}
+    return "";
+  },
 
   init() {
+    let startX = 0, startY = 0;
+
+    // 마우스 위치 추적 (키보드 선택 버블 위치 결정용)
     document.addEventListener("mousemove", (e) => {
-      DocsModule.lastMousePos = { x: e.clientX, y: e.clientY };
-      if (!DocsModule.isMouseDown) return;
-      DocsModule.dragDistance = Math.hypot(
-        e.clientX - DocsModule.startPos.x,
-        e.clientY - DocsModule.startPos.y
-      );
-    }, true);
+      DocsModule._lastMousePos = { x: e.clientX, y: e.clientY };
+    });
 
+    // capture phase — 드래그 시작 기록 (버블/패널 클릭은 무시)
     document.addEventListener("mousedown", (e) => {
-      DocsModule.isMouseDown = true;
-      DocsModule.dragDistance = 0;
-      DocsModule.startPos = { x: e.clientX, y: e.clientY };
+      if (Bubble.el?.contains(e.target)) return;
+      if (
+        e.target.closest?.("#textboi-panel") ||
+        e.target.closest?.(".tb-dd-panel") ||
+        e.target.closest?.(".tb-explain-popup")
+      ) return;
+      startX = e.clientX;
+      startY = e.clientY;
       Bubble.remove();
+      _lastBubbleState = null;
+      DocsModule._pendingText = "";
     }, true);
 
-    document.addEventListener("mouseup", async () => {
-      DocsModule.isMouseDown = false;
-      if (DocsModule.dragDistance < 6) return;
+    // bubble phase — Docs의 mouseup이 먼저 실행되어 selection이 확정된 뒤 copy 캡처
+    document.addEventListener("mouseup", async (e) => {
+      if (!isContextAlive()) return;
+      if (DocsModule._skipNextMouseup) { DocsModule._skipNextMouseup = false; return; }
+      if (Bubble.el?.contains(e.target)) return;
+      const dist = Math.hypot(e.clientX - startX, e.clientY - startY);
+      if (dist < 6) return;
 
-      const text = getSelectedTextUnified();
-      if (!text) return;
+      const rect = { top: e.clientY, bottom: e.clientY, left: e.clientX, right: e.clientX };
+      DocsModule._pendingText = await DocsModule._execCopyAndCapture();
+      DocsModule._showSelectionBubble(rect);
+    }); // bubble phase: Docs의 mouseup 핸들러 이후 실행 → selection 확정 상태에서 copy
 
-      const pos = DocsModule.lastMousePos;
-      const rect = { top: pos.y, bottom: pos.y, left: pos.x, right: pos.x };
-      Bubble.show(rect, text);
-    }, true);
+    // Docs 편집 iframe에 keydown / keyup 부착
+    const tryAttach = () => {
+      const iframe = document.querySelector("iframe.docs-texteventtarget-iframe");
+      if (!iframe?.contentDocument) return false;
 
-    // Docs 편집 iframe에 keydown 리스너 부착 (iframe 안 이벤트는 부모 document까지 버블링 안 됨)
-    if (!this._attachKeydown()) {
-      const observer = new MutationObserver(() => {
-        if (DocsModule._attachKeydown()) observer.disconnect();
+      let _selTimer = null;
+
+      // 이중 Cmd+C → 자동 처리
+      iframe.contentDocument.addEventListener("keydown", async (e) => {
+        if (!isContextAlive()) return;
+        if (!((e.metaKey || e.ctrlKey) && e.key === "c")) return;
+        const now = Date.now();
+        if ((now - lastCopyAt) < DOUBLE_COPY_THRESHOLD_MS) {
+          lastCopyAt = 0;
+          try {
+            const text = await navigator.clipboard.readText();
+            if (text?.trim()) onDoubleCopy(text.trim());
+          } catch {
+            const text = getSelectedTextUnified();
+            if (text) onDoubleCopy(text);
+          }
+        } else {
+          lastCopyAt = now;
+        }
+      }, true);
+
+      // 키보드 선택 감지 (Shift+Arrow 등) → 버블 표시
+      iframe.contentDocument.addEventListener("keyup", (e) => {
+        if (!isContextAlive()) return;
+        if (!e.shiftKey) return;
+        const selKeys = ["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Home","End","PageUp","PageDown"];
+        if (!selKeys.includes(e.key)) return;
+        DocsModule._pendingText = "";
+        clearTimeout(_selTimer);
+        _selTimer = setTimeout(() => {
+          if (!isContextAlive()) return;
+          const pos = DocsModule._lastMousePos ?? { x: window.innerWidth - 80, y: window.innerHeight / 2 };
+          const rect = { top: pos.y, bottom: pos.y, left: pos.x, right: pos.x };
+          DocsModule._showSelectionBubble(rect);
+        }, 300);
+      }, true);
+
+      return true;
+    };
+
+    if (!tryAttach()) {
+      const obs = new MutationObserver(() => {
+        if (tryAttach()) obs.disconnect();
       });
-      observer.observe(document.body, { childList: true, subtree: true });
+      obs.observe(document.body, { childList: true, subtree: true });
     }
   },
 
-  _attachKeydown() {
-    const iframe = document.querySelector("iframe.docs-texteventtarget-iframe");
-    if (!iframe?.contentDocument) return false;
+  // Docs canvas용 버블 표시
+  // _pendingText에 미리 복사된 텍스트가 있으면 사용, 없으면 클릭 시 user-gesture로 복사 시도
+  _showSelectionBubble(rect) {
+    if (!isContextAlive()) return;
+    Bubble.remove();
+    // Docs 버블 상태 저장 (패널 닫힐 때 복원용 — text는 클릭 시점에 확정)
+    _lastBubbleState = { text: DocsModule._pendingText || "", rect };
 
-    iframe.contentDocument.addEventListener("keydown", async (e) => {
-      if (!((e.metaKey || e.ctrlKey) && e.key === "c")) return;
-      const now = Date.now();
-      if ((now - lastCopyAt) < DOUBLE_COPY_THRESHOLD_MS) {
-        lastCopyAt = 0;
-        // Docs는 canvas 기반 → DOM selection 없음
-        // 첫 번째 Cmd+C 시 Docs가 클립보드에 복사했으므로 거기서 읽음
-        try {
-          const text = await navigator.clipboard.readText();
-          if (text?.trim()) onDoubleCopy(text.trim());
-        } catch {
-          // clipboard-read 실패 시 DOM selection fallback
-          const text = getSelectedTextUnified();
-          if (text) onDoubleCopy(text);
+    const el = document.createElement("div");
+    el.id = "textboi-bubble";
+
+    const img = document.createElement("img");
+    let iconUrl;
+    try { iconUrl = chrome.runtime.getURL("icons/icon48.png"); } catch { return; }
+    img.src = iconUrl;
+    img.style.cssText = "width:100% !important; height:100% !important; object-fit:cover !important; border-radius:50% !important; display:block !important; pointer-events:none !important;";
+    el.appendChild(img);
+
+    const size = 36;
+    const top = rect.bottom - size / 2;
+    const left = Math.min(rect.right + 4, window.innerWidth - size - 8);
+    Object.assign(el.style, {
+      top: `${Math.max(8, top)}px`,
+      left: `${Math.max(8, left)}px`,
+    });
+
+    el.addEventListener("mousedown", async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      DocsModule._skipNextMouseup = true; // 이 클릭의 mouseup이 새 버블을 생성하지 않도록
+      el.remove();
+      Bubble.el = null;
+
+      let text = DocsModule._pendingText;
+      DocsModule._pendingText = "";
+
+      if (!text) text = await DocsModule._execCopyAndCapture();
+      if (!text) text = getSelectedTextUnified();
+
+      // 텍스트 추출 성공 여부와 무관하게 패널을 항상 열기
+      if (SidePanel.el) {
+        if (text) {
+          const ta = SidePanel.el.querySelector(".tb-original");
+          if (ta) {
+            ta.value = text;
+            ta.dispatchEvent(new Event("input"));
+            SidePanel._updateSourceLang(text);
+          }
         }
       } else {
-        lastCopyAt = now;
+        SidePanel.show(text);
       }
-    }, true);
+    });
 
-    return true;
+    document.body.appendChild(el);
+    Bubble.el = el;
   },
 };
 

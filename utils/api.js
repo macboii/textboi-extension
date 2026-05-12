@@ -6,9 +6,17 @@ export function buildTranslateMessages(text, targetLang) {
     {
       role: "system",
       content:
-        `You are a professional translator.\n` +
-        `Translate the input text into: ${targetLang}\n` +
-        `Return only the translated text.`,
+        `You are a professional translator.\n\n` +
+        `Your task is to accurately detect the original language of the input text and translate it into the specified target language.\n\n` +
+        `Target Language: ${targetLang}\n\n` +
+        `Guidelines:\n` +
+        `Detect the source language based solely on the input content.\n` +
+        `Translate the meaning accurately and naturally into the target language.\n` +
+        `Use standard grammar, vocabulary, and spelling conventions appropriate for the specified locale.\n\n` +
+        `Additional Instructions:\n` +
+        `Do not preserve the original language.\n` +
+        `Do not include the detected language in your response.\n` +
+        `Only return the translated text.`,
     },
     { role: "user", content: text },
   ];
