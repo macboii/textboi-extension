@@ -57,6 +57,29 @@ TextBoi Chrome Extension의 파일 역할 경계, 메시지 타입, 전역 상�
 { type: 'QUOTA_EXCEEDED' }
 ```
 
+### popup → background (Stripe 빌링)
+
+```javascript
+// Stripe Checkout 세션 생성 요청
+{ type: 'STRIPE_CHECKOUT', plan: 'basic' }
+// → 응답: { ok: true, url?, isUpgrade?, message? } | { ok: false, error: string }
+
+// Stripe Customer Portal 세션 생성 요청
+{ type: 'STRIPE_PORTAL' }
+// → 응답: { ok: true, url } | { ok: false, error: string }
+
+// 현재 플랜 조회
+{ type: 'GET_PLAN' }
+// → 응답: { plan: UserPlan | null }
+```
+
+### background → popup (Stripe 빌링, `chrome.runtime.sendMessage`)
+
+```javascript
+// 결제 완료 후 플랜 갱신 알림 (chrome.tabs.onUpdated → textboi.ai/billing-success 감지)
+{ type: 'PLAN_REFRESHED', plan: UserPlan }
+```
+
 ### background → content (브로드캐스트, AUTH_CHANGED)
 
 ```javascript
