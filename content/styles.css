@@ -297,7 +297,7 @@
   resize: none !important;
   font-size: 14px !important;
   color: #F2F2F7 !important;
-  padding: 14px 16px !important;
+  padding: 14px 36px 14px 16px !important;
   line-height: 1.65 !important;
   min-height: 0 !important;
   display: block !important;
@@ -335,23 +335,25 @@
 }
 
 #textboi-panel .tb-clear-btn {
+  position: absolute !important;
+  top: 8px !important;
+  right: 8px !important;
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
-  width: 26px !important;
-  height: 26px !important;
+  width: 22px !important;
+  height: 22px !important;
   background: transparent !important;
-  border: 1px solid transparent !important;
-  border-radius: 7px !important;
+  border: none !important;
+  border-radius: 6px !important;
   color: #636366 !important;
-  font-size: 12px !important;
+  font-size: 11px !important;
   cursor: pointer !important;
-  flex-shrink: 0 !important;
-  transition: background 0.12s, color 0.12s, border-color 0.12s !important;
+  z-index: 1 !important;
+  transition: background 0.12s, color 0.12s !important;
 }
 #textboi-panel .tb-clear-btn:hover {
-  background: #3A3A3C !important;
-  border-color: #48484A !important;
+  background: rgba(255,255,255,0.08) !important;
   color: #AEAEB2 !important;
 }
 
@@ -534,6 +536,32 @@
   color: #F2F2F7 !important;
 }
 
+#textboi-panel .tb-copy-btn {
+  position: absolute !important;
+  top: 8px !important;
+  right: 8px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 26px !important;
+  height: 26px !important;
+  background: transparent !important;
+  border: none !important;
+  border-radius: 6px !important;
+  color: #636366 !important;
+  cursor: pointer !important;
+  z-index: 1 !important;
+  transition: background 0.12s, color 0.12s !important;
+}
+#textboi-panel .tb-copy-btn:disabled {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+#textboi-panel .tb-copy-btn:not(:disabled):hover {
+  background: rgba(255,255,255,0.08) !important;
+  color: #AEAEB2 !important;
+}
+
 /* ═══════════════════════════════════════════════════
    커스텀 드롭다운 (body에 붙음 — panel 밖)
    ═══════════════════════════════════════════════════ */
@@ -652,7 +680,7 @@
 
 #textboi-panel .tb-result .diff-sentence {
   flex: 1 !important;
-  white-space: pre-wrap !important;
+  white-space: normal !important;
   word-break: break-word !important;
   line-height: 1.65 !important;
 }
@@ -937,6 +965,8 @@
   #textboi-panel .tb-replace-btn:disabled { background: #D1D1D6 !important; color: #8E8E93 !important; }
   #textboi-panel .tb-retry-btn { background: #ffffff !important; color: #3A3A3C !important; border-color: #D1D1D6 !important; }
   #textboi-panel .tb-retry-btn:hover { background: #E5E5EA !important; color: #1C1C1E !important; }
+  #textboi-panel .tb-copy-btn { background: transparent !important; color: #8E8E93 !important; }
+  #textboi-panel .tb-copy-btn:not(:disabled):hover { background: rgba(0,0,0,0.06) !important; color: #1C1C1E !important; }
   #textboi-panel .tb-guest-banner { background: #FFFBEB !important; border-color: #FCD34D !important; color: #92400E !important; }
   #textboi-panel .tb-login-prompt { background: #E3EDF8 !important; color: #194F94 !important; }
   #textboi-popover { background: #ffffff !important; border-color: #D1D1D6 !important; }

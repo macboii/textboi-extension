@@ -418,8 +418,10 @@ function _charLevelDiff(dmp, text1, text2) {
 
 function generateDiffHtml(original, corrected) {
   const dmp = new DiffMatchPatch();
-  const orig = original.trim();
-  const corr = corrected.trim();
+  // 소프트 줄바꿈(textarea 자동 줄바꿈)을 공백으로 치환해 diff 내 \n 제거
+  const normalize = (s) => s.trim().replace(/\r\n/g, "\n").replace(/[ \t]*\n[ \t]*/g, " ").replace(/\n+/g, " ").replace(/  +/g, " ");
+  const orig = normalize(original);
+  const corr = normalize(corrected);
 
   const diffs = (_isCJK(orig) || _isCJK(corr))
     ? _charLevelDiff(dmp, orig, corr)
@@ -719,6 +721,7 @@ const SidePanel = {
         this.currentResult = cache.result;
         this.state = "done";
         this.el.querySelector(".tb-replace-btn")?.removeAttribute("disabled");
+        this.el.querySelector(".tb-copy-btn")?.removeAttribute("disabled");
         this.el.querySelector(".tb-empty-guide")?.remove();
       }
 
@@ -774,6 +777,7 @@ const SidePanel = {
       diffHtml: isDiffMode ? (resultEl?.innerHTML || "") : null,
     };
     this.el.querySelector(".tb-replace-btn")?.removeAttribute("disabled");
+    this.el.querySelector(".tb-copy-btn")?.removeAttribute("disabled");
     const sp = this.el.querySelector(".tb-spinner");
     if (sp) sp.style.setProperty("display", "none", "important");
     this.el.querySelector(".tb-empty-guide")?.remove();
@@ -889,11 +893,11 @@ const SidePanel = {
           <button class="tb-source-lang-btn tb-lang-trigger">🌐 Auto-detect ▾</button>
         </div>
         <div class="tb-text-box">
+          <button class="tb-clear-btn" aria-label="Clear input">✕</button>
           <textarea class="tb-original" placeholder="Selected text appears here..." maxlength="10000"></textarea>
           <div class="tb-original-footer">
             <span class="tb-char-count">0 / 10,000</span>
             <div class="tb-original-actions">
-              <button class="tb-clear-btn" aria-label="Clear input">✕</button>
               <button class="tb-submit-btn" aria-label="Run">⬇</button>
             </div>
           </div>
@@ -907,6 +911,7 @@ const SidePanel = {
         </div>
         <div class="tb-text-box">
           <div class="tb-result-wrap">
+            <button class="tb-copy-btn" disabled aria-label="Copy result"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
             <div class="tb-result"></div>
             <div class="tb-empty-guide">
               <div class="tb-empty-shortcut">
@@ -1061,6 +1066,20 @@ const SidePanel = {
       if (this.state === "done") handleReplace(this.currentResult);
     });
 
+    this.el.querySelector(".tb-copy-btn").addEventListener("click", async () => {
+      if (!this.currentResult) return;
+      try {
+        await navigator.clipboard.writeText(this.currentResult);
+        const btn = this.el.querySelector(".tb-copy-btn");
+        if (!btn) return;
+        const prev = btn.innerHTML;
+        btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#30D158" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
+        setTimeout(() => { if (btn.isConnected) btn.innerHTML = prev; }, 1500);
+      } catch {
+        showToast("Copy failed", "error");
+      }
+    });
+
     this.el.querySelector(".tb-retry-btn").addEventListener("click", () => this._rerun(settings));
 
     this.el.querySelector(".tb-submit-btn").addEventListener("click", () => this._rerun(settings));
@@ -1103,6 +1122,7 @@ const SidePanel = {
       }
       // disable apply button and reset state
       this.el.querySelector(".tb-replace-btn")?.setAttribute("disabled", "");
+      this.el.querySelector(".tb-copy-btn")?.setAttribute("disabled", "");
       this.state = null;
       this.currentResult = "";
       // abort any in-progress streaming
@@ -1501,6 +1521,11 @@ function _showBubbleForSelection() {
   let rect = null;
 
   if (text && sel.rangeCount > 0) {
+    // selection이 패널 내부에 있으면 버블 표시 안 함
+    const ancestor = sel.getRangeAt(0).commonAncestorContainer;
+    const anchorEl = ancestor.nodeType === Node.TEXT_NODE ? ancestor.parentElement : ancestor;
+    if (anchorEl?.closest?.("#textboi-panel")) return;
+
     lastSelectionRange = sel.getRangeAt(0).cloneRange();
     rect = getSelectionEndRect(sel.getRangeAt(0));
   }
@@ -1553,21 +1578,23 @@ function _attachIframeListeners() {
 
 function initCopyDetector() {
   let _isMouseDown = false;
+  let _mouseDownInUI = false; // 패널/드롭다운/버블/팝업 안에서 눌렸으면 mouseup도 무시
 
   document.addEventListener("mousedown", (e) => {
     _isMouseDown = true;
-    // 패널/드롭다운/버블/팝업 클릭은 새 선택이 아님 — lastBubbleState 유지
-    if (
+    _mouseDownInUI = !!(
       e.target.closest?.("#textboi-panel") ||
       e.target.closest?.(".tb-dd-panel") ||
       e.target.closest?.(".tb-explain-popup") ||
       e.target.closest?.("#textboi-bubble")
-    ) return;
+    );
+    if (_mouseDownInUI) return;
     Bubble.remove();
     _lastBubbleState = null; // 페이지 컨텐츠 클릭 = 새 선택 시작, 이전 버블 무효화
   });
   document.addEventListener("mouseup", () => {
     _isMouseDown = false;
+    if (_mouseDownInUI) return; // 패널/UI 안 클릭 — 버블 갱신 안 함
     _handleMouseUp();
   });
 

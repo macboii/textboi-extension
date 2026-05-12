@@ -10,14 +10,15 @@ OCR 기능 없음. 데스크탑 앱(`textBoi_desktop/`)의 API, 텍스트 정제
 
 | 문서 | 내용 |
 |------|------|
-| [`.claude/SPEC.md`](.claude/SPEC.md) | 기능 상세 명세서 — ⚠️ 일부 섹션 구현과 불일치 (MiniPopover, 모델 목록, Docs Replace 전략 등) |
-| [`.claude/DEV_PLAN.md`](.claude/DEV_PLAN.md) | 세부 개발 계획 — Phase 1~9 완료. Phase 10 QA 체크리스트 참고용 |
+| [`.claude/rules/SPEC.md`](.claude/rules/SPEC.md) | 기능 상세 명세서 — ⚠️ 일부 섹션 구현과 불일치 (MiniPopover, 모델 목록, Docs Replace 전략 등) |
+| [`.claude/rules/DEV_PLAN.md`](.claude/rules/DEV_PLAN.md) | 세부 개발 계획 — Phase 1~9 완료. Phase 10 QA 체크리스트 참고용 |
 | [`.claude/rules/ui-spec.md`](.claude/rules/ui-spec.md) | **UI 정의서** — 데스크탑 앱 스크린샷 기준 컴포넌트 명세, 구현 상태 체크리스트 |
 | [`.claude/rules/architecture.md`](.claude/rules/architecture.md) | 파일 역할 경계, 메시지 타입, 전역 상태 |
 | [`.claude/rules/content-script-patterns.md`](.claude/rules/content-script-patterns.md) | 이중 복사 감지, 사이트별 선택 처리, Bubble 패턴 |
 | [`.claude/rules/replace-strategy.md`](.claude/rules/replace-strategy.md) | 환경별(Web/Gmail/Docs) 텍스트 치환 패턴 |
 | [`.claude/rules/ui-redesign-plan.md`](.claude/rules/ui-redesign-plan.md) | SidePanel 리디자인 이력 및 _position() 전략 |
 | [`.claude/rules/app-flow.md`](.claude/rules/app-flow.md) | **앱 작동 플로우** — 이중 복사 트리거→스트리밍→Replace 전체 흐름, 데스크탑 대비 비교 |
+| [`.claude/rules/billing-plan.md`](.claude/rules/billing-plan.md) | **빌링·플랜·토큰 차감** — Free Plan 생성, user_history 저장, DB 트리거 차감 구조, Quota 체크, 개발 계획 Phase A~F |
 | [`.claude/skills/ref-desktop-backend.md`](.claude/skills/ref-desktop-backend.md) | **스킬** `/ref-desktop-backend` — 백엔드 디렉토리 맵, API 엔드포인트 스펙, 데이터 파일 경로 |
 | [`.claude/skills/port-from-desktop.md`](.claude/skills/port-from-desktop.md) | **스킬** `/port-from-desktop` — desktop → extension TS→JS 포팅 규칙 |
 

@@ -1,6 +1,7 @@
 import {
   OPENAI_PROXY_URL,
   SUPABASE_REST_API_URL,
+  MODELS,
 } from "../utils/constants.js";
 import { buildTranslateMessages, buildCorrectMessages } from "../utils/api.js";
 import { refreshAccessToken } from "../utils/auth.js";
@@ -9,6 +10,24 @@ import { applyTextCleanup } from "../utils/textCleanup.js";
 
 // tabId → AbortController
 const abortControllers = new Map();
+
+const VALID_MODEL_IDS = new Set(MODELS.map((m) => m.id));
+const LANG_CODE_RE = /^[a-z]{2,3}(-[A-Z]{2,4})?$/;
+const MAX_TEXT_LEN = 10_000;
+const MAX_PROMPT_LEN = 500;
+
+function sanitizeMsg(msg) {
+  return {
+    ...msg,
+    model: VALID_MODEL_IDS.has(msg.model) ? msg.model : "gpt-4o-mini",
+    text: typeof msg.text === "string" ? msg.text.slice(0, MAX_TEXT_LEN) : "",
+    targetLang: LANG_CODE_RE.test(msg.targetLang ?? "") ? msg.targetLang : "en-US",
+    rewritePrompt:
+      typeof msg.rewritePrompt === "string"
+        ? msg.rewritePrompt.slice(0, MAX_PROMPT_LEN)
+        : "proofread",
+  };
+}
 
 /* =========================
    메시지 수신
@@ -25,7 +44,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const controller = new AbortController();
     abortControllers.set(tabId, controller);
 
-    handleProcessText(msg, tabId, controller.signal).catch(console.error);
+    handleProcessText(sanitizeMsg(msg), tabId, controller.signal).catch(console.error);
     return true;
   }
 
@@ -223,7 +242,9 @@ async function handleExplainDiff(msg) {
   if (!token) token = await refreshAccessToken();
   if (!token) return { type: "error", message: "Sign in required" };
 
-  const { diffHtml, rewritePrompt = "proofread", locale = "en-US", model = "gpt-4o-mini" } = msg;
+  const rawModel = msg.model ?? "gpt-4o-mini";
+  const { diffHtml, rewritePrompt = "proofread", locale = "en-US" } = msg;
+  const model = VALID_MODEL_IDS.has(rawModel) ? rawModel : "gpt-4o-mini";
 
   const systemPrompt = `You are a writing assistant. Analyze the HTML diff below and explain each change made.
 
