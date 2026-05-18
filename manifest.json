@@ -17,7 +17,9 @@
   "host_permissions": [
     "https://worker.textboi.ai/*",
     "https://*.supabase.co/*",
-    "https://supabase-rest-api.bangcoderpro.workers.dev/*"
+    "https://supabase-rest-api.bangcoderpro.workers.dev/*",
+    "https://stripe-worker.bangcoderpro.workers.dev/*",
+    "https://textboi.ai/*"
   ],
 
   "background": {

@@ -94,54 +94,124 @@ body {
   border: 1px solid #fcd34d;
 }
 
+.tb-plan-badge--pro {
+  background: #ede9fe;
+  color: #5b21b6;
+  border: 1px solid #c4b5fd;
+}
+
+.tb-plan-badge--trial {
+  background: #d1fae5;
+  color: #065f46;
+  border: 1px solid #6ee7b7;
+}
+
+/* ── Quota bar ── */
+.tb-quota-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tb-quota-bar {
+  width: 100%;
+  height: 6px;
+  background: #e5e7eb;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.tb-quota-fill {
+  height: 100%;
+  background: #2563eb;
+  border-radius: 3px;
+  transition: width 0.3s ease, background 0.3s ease;
+}
+
+.tb-quota-fill--warning { background: #f59e0b; }
+.tb-quota-fill--critical { background: #ef4444; }
+
+.tb-quota-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.tb-quota-text {
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.tb-quota-refresh-btn {
+  background: none;
+  border: none;
+  color: #9ca3af;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+  transition: color 0.15s, opacity 0.15s;
+}
+.tb-quota-refresh-btn:hover { color: #374151; }
+
+.tb-renewal-dday {
+  font-size: 11px;
+  color: #9ca3af;
+}
+
 /* ── Plan cards ── */
 .tb-plan-cards {
   display: flex;
-  flex-direction: column;
   gap: 8px;
 }
 
 .tb-plan-card {
+  flex: 1;
   border: 1px solid #e5e7eb;
   border-radius: 10px;
-  padding: 10px 12px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   background: #f9fafb;
 }
 
 .tb-plan-card--basic {
+  border-color: #fcd34d;
+  background: #fffbeb;
+}
+
+.tb-plan-card--active {
+  box-shadow: 0 0 0 2px #2563eb;
   border-color: #2563eb;
-  background: #eff6ff;
+}
+
+.tb-plan-card--basic.tb-plan-card--active {
+  box-shadow: 0 0 0 2px #f59e0b;
+  border-color: #f59e0b;
 }
 
 .tb-plan-card-header {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  margin-bottom: 8px;
 }
 
 .tb-plan-name {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
   color: #111827;
 }
 
-.tb-plan-card--basic .tb-plan-name {
-  color: #1d4ed8;
-}
-
-.tb-plan-price strong {
-  font-size: 15px;
-  font-weight: 800;
+.tb-plan-price {
+  font-size: 14px;
+  font-weight: 700;
   color: #111827;
 }
 
-.tb-plan-card--basic .tb-plan-price strong {
-  color: #1d4ed8;
-}
-
 .tb-plan-per {
-  font-size: 11px;
+  font-size: 10px;
+  font-weight: 500;
   color: #6b7280;
 }
 
@@ -149,13 +219,75 @@ body {
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
+  flex: 1;
 }
 
 .tb-plan-features li {
+  font-size: 10px;
+  color: #6b7280;
+  padding-left: 10px;
+  position: relative;
+}
+
+.tb-plan-features li::before {
+  content: "✓";
+  position: absolute;
+  left: 0;
+  color: #10b981;
+  font-size: 9px;
+}
+
+.tb-plan-card-action {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+/* ── Plan actions ── */
+.tb-plan-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tb-cancel-notice {
   font-size: 11px;
-  color: #374151;
-  line-height: 1.4;
+  color: #ef4444;
+  text-align: center;
+}
+
+.tb-plan-loading {
+  font-size: 12px;
+  color: #9ca3af;
+  text-align: center;
+  padding: 12px 0;
+}
+
+/* ── Popup toast ── */
+.tb-popup-toast {
+  position: fixed;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%) translateY(8px);
+  background: #111827;
+  color: #fff;
+  font-size: 11px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  opacity: 0;
+  transition: opacity 0.2s, transform 0.2s;
+  pointer-events: none;
+  white-space: nowrap;
+  max-width: 240px;
+  text-align: center;
+  z-index: 9999;
+}
+
+.tb-popup-toast--visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
 }
 
 /* ── Buttons ── */
@@ -187,7 +319,6 @@ body {
 
 .tb-btn--upgrade {
   width: 100%;
-  margin-top: 10px;
   background: #2563eb;
   color: #fff;
   font-size: 12px;
@@ -195,6 +326,19 @@ body {
   border-radius: 8px;
 }
 .tb-btn--upgrade:hover { background: #1d4ed8; }
+.tb-btn--upgrade:disabled { background: #93c5fd; cursor: not-allowed; }
+
+.tb-btn--manage {
+  width: 100%;
+  background: none;
+  border: 1px solid #e5e7eb;
+  color: #374151;
+  font-size: 12px;
+  padding: 7px 10px;
+  border-radius: 8px;
+}
+.tb-btn--manage:hover { background: #f9fafb; }
+.tb-btn--manage:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ── Dark mode ── */
 @media (prefers-color-scheme: dark) {
@@ -213,19 +357,54 @@ body {
     border-color: #92400e;
   }
 
+  .tb-plan-badge--pro {
+    background: #2e1065;
+    color: #c4b5fd;
+    border-color: #7c3aed;
+  }
+
+  .tb-plan-badge--trial {
+    background: #064e3b;
+    color: #6ee7b7;
+    border-color: #065f46;
+  }
+
+  .tb-quota-bar { background: #374151; }
+  .tb-quota-fill { background: #3b82f6; }
+  .tb-quota-fill--warning { background: #d97706; }
+  .tb-quota-fill--critical { background: #dc2626; }
+  .tb-quota-text { color: #9ca3af; }
+  .tb-quota-refresh-btn { color: #6b7280; }
+  .tb-quota-refresh-btn:hover { color: #d1d5db; }
+  .tb-renewal-dday { color: #6b7280; }
+  .tb-cancel-notice { color: #f87171; }
+
+  .tb-btn--upgrade { background: #3b82f6; }
+  .tb-btn--upgrade:hover { background: #2563eb; }
+
+  .tb-btn--manage { border-color: #374151; color: #d1d5db; }
+  .tb-btn--manage:hover { background: #374151; }
+
+  .tb-popup-toast { background: #f3f4f6; color: #111827; }
+
   .tb-plan-card {
     background: #111827;
     border-color: #374151;
   }
-
   .tb-plan-card--basic {
-    background: #1e3a5f;
+    background: #1c1408;
+    border-color: #92400e;
+  }
+  .tb-plan-card--active {
+    box-shadow: 0 0 0 2px #3b82f6;
     border-color: #3b82f6;
   }
-
+  .tb-plan-card--basic.tb-plan-card--active {
+    box-shadow: 0 0 0 2px #d97706;
+    border-color: #d97706;
+  }
   .tb-plan-name { color: #f9fafb; }
-  .tb-plan-card--basic .tb-plan-name { color: #93c5fd; }
-  .tb-plan-price strong { color: #f9fafb; }
-  .tb-plan-card--basic .tb-plan-price strong { color: #93c5fd; }
-  .tb-plan-features li { color: #d1d5db; }
+  .tb-plan-price { color: #f9fafb; }
+  .tb-plan-per { color: #9ca3af; }
+  .tb-plan-features li { color: #9ca3af; }
 }

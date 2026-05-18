@@ -11,6 +11,8 @@ export const SUPABASE_ANON_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF6Z3BsbmZjemZvcmltbXRwem54Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU1MDY1NTEsImV4cCI6MjA3MTA4MjU1MX0.M9MF6xmAUjSE1VKTF_Q027luPrMjwRa8_m1iSVyF5TM";
 
 
+export const STRIPE_WORKER_URL = "https://stripe-worker.bangcoderpro.workers.dev";
+
 export const DOUBLE_COPY_THRESHOLD_MS = 500;
 
 export const DEFAULT_SETTINGS = {

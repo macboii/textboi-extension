@@ -209,6 +209,11 @@ const SomeComponent = {
     this.el = document.createElement('div');
     // ...
     document.body.appendChild(this.el);
+    // 패널 열릴 때 .tb-original textarea에 포커스 → Enter 키가 패널 submit으로 동작
+    requestAnimationFrame(() => {
+      this.el?.classList.add('tb-panel--open');
+      this.el?.querySelector('.tb-original')?.focus();
+    });
   },
   
   remove() {

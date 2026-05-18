@@ -31,7 +31,8 @@ export async function loginWithGoogle() {
         if (!accessToken) return reject(new Error("No access token"));
 
         await setTokens(accessToken, refreshToken);
-        broadcastAuthChange(true);
+        // POST_LOGIN을 background로 위임 (사용자 등록 + Free Plan 생성 + broadcast)
+        chrome.runtime.sendMessage({ type: "POST_LOGIN" }).catch(() => {});
         resolve();
       }
     );

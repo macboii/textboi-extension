@@ -669,7 +669,7 @@ async function onDoubleCopy(text) {
   SidePanel._resultCache = null; // 이중복사는 항상 새 결과 요청
   await SidePanel.show(text);
   SidePanel.startSpinner();
-  triggerProcessing(text);
+  triggerProcessing(text); // background에서 quota 초과 시 QUOTA_EXCEEDED 반환
 }
 
 // ═══════════════════════════════════════════════════════
@@ -685,11 +685,13 @@ const SidePanel = {
   _currentMode: "translate",
   _currentRewritePrompt: "",
   _resultCache: null, // { text, result, isDiff, diffHtml } — 패널 재오픈 시 복원용
+  _quotaExceeded: false, // 토큰/게스트 한도 초과 시 재요청 차단
 
   async show(text) {
     try {
       this.remove();
       this.state = "loading";
+      this._quotaExceeded = false;
       this.currentResult = "";
       this.originalText = text;
 
@@ -725,7 +727,11 @@ const SidePanel = {
         this.el.querySelector(".tb-empty-guide")?.remove();
       }
 
-      requestAnimationFrame(() => this.el?.classList.add("tb-panel--open"));
+      requestAnimationFrame(() => {
+        this.el?.classList.add("tb-panel--open");
+        // 패널 포커스 → Enter 키가 패널 submit으로 동작하도록
+        this.el?.querySelector(".tb-original")?.focus();
+      });
     } catch (e) {
       if (!e?.message?.includes("Extension context invalidated")) throw e;
     }
@@ -805,6 +811,9 @@ const SidePanel = {
 
   showLoginPrompt() {
     if (!this.el) return;
+    this._quotaExceeded = true;
+    this.state = "error"; // Cmd+Enter Replace 차단
+    this.el.querySelector(".tb-spinner")?.remove();
     const resultEl = this.el.querySelector(".tb-result");
     if (!resultEl) return;
     resultEl.innerHTML = "";
@@ -812,6 +821,23 @@ const SidePanel = {
     banner.className = "tb-login-prompt";
     banner.textContent = "Free usage limit reached. Sign in to continue.";
     resultEl.appendChild(banner);
+  },
+
+  showQuotaExceeded() {
+    if (!this.el) return;
+    this._quotaExceeded = true;
+    this.state = "error"; // Cmd+Enter Replace 차단
+    this.el.querySelector(".tb-spinner")?.remove();
+    const resultEl = this.el.querySelector(".tb-result");
+    if (!resultEl) return;
+    resultEl.innerHTML = "";
+    const banner = document.createElement("div");
+    banner.className = "tb-login-prompt";
+    banner.innerHTML = `Monthly token limit reached. <button class="tb-quota-upgrade-btn">Upgrade to Basic →</button>`;
+    resultEl.appendChild(banner);
+    banner.querySelector(".tb-quota-upgrade-btn")?.addEventListener("click", () => {
+      chrome.runtime.sendMessage({ type: "STRIPE_CHECKOUT", plan: "basic" }).catch(() => {});
+    });
   },
 
   showGuestBanner(remaining) {
@@ -1171,6 +1197,7 @@ const SidePanel = {
   },
 
   _rerun(settings) {
+    if (this._quotaExceeded) return;
     const text = this.el?.querySelector(".tb-original")?.value?.trim();
     if (!text || !isContextAlive()) return;
     this._resultCache = null; // 재실행 시 캐시 무효화
@@ -1850,6 +1877,10 @@ chrome.runtime.onMessage.addListener((msg) => {
 
     case "GUEST_LIMIT_REACHED":
       SidePanel.showLoginPrompt();
+      break;
+
+    case "QUOTA_EXCEEDED":
+      SidePanel.showQuotaExceeded();
       break;
 
     case "GUEST_REMAINING":

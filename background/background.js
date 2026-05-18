@@ -1,12 +1,16 @@
 import {
   OPENAI_PROXY_URL,
+  SUPABASE_URL,
+  SUPABASE_ANON_KEY,
   SUPABASE_REST_API_URL,
+  STRIPE_WORKER_URL,
   MODELS,
 } from "../utils/constants.js";
 import { buildTranslateMessages, buildCorrectMessages } from "../utils/api.js";
 import { refreshAccessToken } from "../utils/auth.js";
 import { getAccessToken, getDeviceId } from "../utils/storage.js";
 import { applyTextCleanup } from "../utils/textCleanup.js";
+import { countTokens, getModelMultiplier } from "../utils/tokenCount.js";
 
 // tabId → AbortController
 const abortControllers = new Map();
@@ -57,7 +61,37 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === "EXPLAIN_DIFF") {
     handleExplainDiff(msg).then(sendResponse).catch(() => sendResponse({ type: "error", message: "Explanation failed" }));
-    return true; // keep channel open for async response
+    return true;
+  }
+
+  if (msg.type === "POST_LOGIN") {
+    handlePostLogin().catch(console.error);
+    return;
+  }
+
+  if (msg.type === "STRIPE_CHECKOUT") {
+    handleStripeCheckout(msg.plan).then(sendResponse).catch(() => sendResponse({ ok: false, error: "Checkout failed" }));
+    return true;
+  }
+
+  if (msg.type === "STRIPE_PORTAL") {
+    handleStripePortal().then(sendResponse).catch(() => sendResponse({ ok: false, error: "Portal failed" }));
+    return true;
+  }
+
+  if (msg.type === "GET_PLAN") {
+    fetchCurrentPlan()
+      .then((plan) => {
+        if (plan) chrome.storage.local.set({ tb_current_plan: plan });
+        sendResponse({ plan });
+      })
+      .catch(() => {
+        // 네트워크/인증 실패 시 캐시된 플랜 반환
+        chrome.storage.local.get("tb_current_plan", ({ tb_current_plan }) => {
+          sendResponse({ plan: tb_current_plan || null });
+        });
+      });
+    return true;
   }
 });
 
@@ -98,29 +132,55 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 /* =========================
    핵심: 스트리밍 처리
 ========================= */
-async function handleProcessText(msg, tabId, signal) {
-  // 1. 토큰 확인 (만료 시 refresh 시도)
-  let token = await getAccessToken();
-  if (!token) {
-    token = await refreshAccessToken();
+function isTokenExpired(token) {
+  try {
+    const exp = JSON.parse(atob(token.split(".")[1])).exp;
+    return exp * 1000 < Date.now() + 60_000; // 60초 여유
+  } catch {
+    return true;
   }
+}
+
+async function getValidToken() {
+  const token = await getAccessToken();
+  if (!token) return await refreshAccessToken();
+  if (isTokenExpired(token)) return await refreshAccessToken();
+  return token;
+}
+
+// 만료 여부 무관하게 저장된 토큰 반환 (JWT 페이로드 디코딩 전용)
+async function getAnyToken() {
+  return (await getValidToken()) || (await getAccessToken());
+}
+
+async function handleProcessText(msg, tabId, signal) {
+  // 1. 토큰 확인 (만료 시 proactive refresh)
+  let token = await getValidToken();
 
   const isGuest = !token;
 
-  // 2. 게스트 한도 확인
+  // 2. 한도 확인
+  const deviceId = await getDeviceId();
+
+  // 로그인 사용자: 장치 세션 1회 등록 (미등록이면 save-history가 실패하므로)
+  if (!isGuest) await ensureDeviceSessionOnce(token, deviceId);
   let guestRemaining = null;
   if (isGuest) {
-    const deviceId = await getDeviceId();
     const quota = await checkGuestQuota(deviceId);
     if (!quota.ok) {
       chrome.tabs.sendMessage(tabId, { type: "GUEST_LIMIT_REACHED" });
       return;
     }
     guestRemaining = quota.remaining ?? null;
+  } else {
+    const quota = await checkUserQuota(token, deviceId);
+    if (!quota.ok) {
+      chrome.tabs.sendMessage(tabId, { type: "QUOTA_EXCEEDED" });
+      return;
+    }
   }
 
   // 3. 엔드포인트 + 헤더 결정
-  const deviceId = isGuest ? await getDeviceId() : null;
   const endpoint = isGuest
     ? `${SUPABASE_REST_API_URL}/guest/chat`
     : `${OPENAI_PROXY_URL}/v1/chat/completions`;
@@ -228,18 +288,26 @@ async function handleProcessText(msg, tabId, signal) {
     chrome.tabs.sendMessage(tabId, { type: "GUEST_REMAINING", remaining: guestRemaining });
   }
 
-  chrome.tabs.sendMessage(tabId, {
-    type: "STREAM_DONE",
-    result: applyTextCleanup(fullResult),
-  });
+  const cleanResult = applyTextCleanup(fullResult);
+  chrome.tabs.sendMessage(tabId, { type: "STREAM_DONE", result: cleanResult });
+
+  // 로그인 사용자: 히스토리 저장 후 quota 갱신 알림
+  if (!isGuest) {
+    saveHistory(msg, fullResult, token, deviceId)
+      .then(async () => {
+        const plan = await fetchCurrentPlan();
+        if (plan) chrome.storage.local.set({ tb_current_plan: plan });
+        chrome.runtime.sendMessage({ type: "QUOTA_REFRESHED", plan }).catch(() => {});
+      })
+      .catch(console.error);
+  }
 }
 
 /* =========================
    Diff 설명 생성
 ========================= */
 async function handleExplainDiff(msg) {
-  let token = await getAccessToken();
-  if (!token) token = await refreshAccessToken();
+  let token = await getValidToken();
   if (!token) return { type: "error", message: "Sign in required" };
 
   const rawModel = msg.model ?? "gpt-4o-mini";
@@ -334,4 +402,396 @@ async function checkGuestQuota(deviceId) {
     return { ok: true };
   }
 }
+
+/* =========================
+   로그인 사용자 Quota 체크
+========================= */
+async function checkUserQuota(token, deviceId) {
+  try {
+    const now = encodeURIComponent(new Date().toISOString());
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/user_plans?plan_status=in.(active,trialing,scheduled)&billing_period_end=gt.${now}&select=token_quota,token_used&order=activated_at.desc&limit=1`,
+      { headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${token}` } }
+    );
+    const rows = await res.json();
+    if (!Array.isArray(rows) || rows.length === 0) {
+      // 플랜 없음 → 이번 달 최초 → ensure-free-plan 생성 후 허용
+      ensureFreePlanIfNeeded(token, deviceId).catch(console.error);
+      return { ok: true };
+    }
+    const { token_quota, token_used } = rows[0];
+    return { ok: token_used < token_quota, used: token_used, quota: token_quota };
+  } catch {
+    return { ok: true }; // 네트워크 오류 시 허용
+  }
+}
+
+async function ensureFreePlanIfNeeded(token, deviceId) {
+  try {
+    await fetch(`${SUPABASE_REST_API_URL}/ensure-free-plan`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        "x-device-id": deviceId,
+      },
+    });
+  } catch {
+    // 조용히 무시
+  }
+}
+
+/* =========================
+   POST_LOGIN — 사용자 등록 + Free Plan 생성
+========================= */
+async function handlePostLogin() {
+  const token = await getValidToken();
+  if (!token) return;
+
+  let payload;
+  try {
+    payload = JSON.parse(atob(token.split(".")[1]));
+  } catch {
+    return;
+  }
+  const userId = payload.sub;
+  const email = payload.email || "";
+  const name = payload.user_metadata?.full_name || payload.user_metadata?.name || email;
+  const avatarUrl = payload.user_metadata?.avatar_url || payload.user_metadata?.picture || null;
+  const provider = payload.app_metadata?.provider || "google";
+  const deviceId = await getDeviceId();
+
+  // 1. public.users upsert
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/users`, {
+      method: "POST",
+      headers: {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        Prefer: "resolution=merge-duplicates,return=minimal",
+      },
+      body: JSON.stringify({
+        id: userId,
+        email,
+        name,
+        avatar_url: avatarUrl,
+        provider,
+        platform: "chrome-extension",
+        app_version: chrome.runtime.getManifest().version,
+        last_login_at: new Date().toISOString(),
+      }),
+    });
+  } catch {
+    // 조용히 무시
+  }
+
+  // 2. Device Session 등록 (ensure-free-plan 전에 반드시 선행)
+  try {
+    await fetch(`${SUPABASE_REST_API_URL}/save-session`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        user_id: userId,
+        device_id: deviceId,
+        device_name: "chrome-extension",
+        user_agent: navigator.userAgent,
+      }),
+    });
+  } catch {
+    // 조용히 무시
+  }
+
+  // 3. 이번 달 Free Plan 생성 (없을 때만)
+  try {
+    await fetch(`${SUPABASE_REST_API_URL}/ensure-free-plan`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        "x-device-id": deviceId,
+      },
+    });
+  } catch {
+    // 조용히 무시
+  }
+
+  // 4. 로그인 브로드캐스트
+  const tabs = await chrome.tabs.query({});
+  for (const tab of tabs) {
+    chrome.tabs.sendMessage(tab.id, { type: "AUTH_CHANGED", loggedIn: true }).catch(() => {});
+  }
+}
+
+/* =========================
+   히스토리 저장 + 토큰 차감
+========================= */
+async function saveHistory(msg, rawOutput, token, deviceId) {
+  const messages =
+    msg.mode === "translate"
+      ? buildTranslateMessages(msg.text, msg.targetLang || "en-US")
+      : buildCorrectMessages(msg.text, msg.rewritePrompt || "proofread");
+  const systemPromptText = messages[0].content;
+
+  const inputTokens = countTokens(msg.text);
+  const outputTokens = countTokens(rawOutput);
+  const promptTokens = countTokens(systemPromptText);
+  // Desktop과 동일: 메시지 오버헤드 +4/메시지 × 2메시지 + 2 총합 = 10
+  const overhead = 10;
+  const multiplier = getModelMultiplier(msg.model);
+  const total = Math.round((inputTokens + outputTokens + promptTokens + overhead) * multiplier);
+
+  const isTranslate = msg.mode === "translate";
+  const histPayload = {
+    mode: isTranslate ? "TRANSLATE" : "CORRECT",
+    input_text: msg.text,
+    output_text: rawOutput,
+    input_lang: "auto",
+    output_lang: isTranslate ? (msg.targetLang || "en-US") : "auto",
+    model: msg.model || "gpt-4o-mini",
+    detected_lang: "auto",
+    ...(isTranslate
+      ? { trans_prompt_text: systemPromptText, token_usage_transprompt: promptTokens }
+      : {
+          correct_prompt_text: systemPromptText,
+          token_usage_correctprompt: promptTokens,
+          rewrite_prompt: msg.rewritePrompt,
+        }),
+    token_usage_input: inputTokens,
+    token_usage_output: outputTokens,
+    token_usage_history_total: total,
+  };
+
+  const doSave = () =>
+    fetch(`${SUPABASE_REST_API_URL}/save-history`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        "x-device-id": deviceId,
+      },
+      body: JSON.stringify(histPayload),
+    });
+
+  let res = await doSave();
+  console.log("[TextBoi] save-history status:", res.status);
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    console.error("[TextBoi] save-history failed:", res.status, errText);
+
+    // 토큰 만료(401 "expired") → 토큰 재발급 후 재시도
+    if (res.status === 401 && (errText.includes("expired") || errText.includes("Invalid"))) {
+      const newToken = await refreshAccessToken();
+      if (newToken) {
+        const retryRes = await fetch(`${SUPABASE_REST_API_URL}/save-history`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${newToken}`,
+            "x-device-id": deviceId,
+          },
+          body: JSON.stringify(histPayload),
+        });
+        console.log("[TextBoi] save-history retry (new token) status:", retryRes.status);
+        if (!retryRes.ok) console.error("[TextBoi] save-history retry failed:", await retryRes.text().catch(() => ""));
+        return;
+      }
+    }
+
+    // 장치 세션 미등록 → 스탈 캐시 제거 후 /save-session 재등록, 재시도
+    if (res.status === 401 && (errText.includes("DEVICE_NOT_AUTHORIZED") || errText.includes("device"))) {
+      const sessionKey = `tb_session_${deviceId}`;
+      chrome.storage.local.remove(sessionKey); // 잘못 캐시된 키 제거
+      const ok = await registerDeviceSession(token, deviceId);
+      if (ok) chrome.storage.local.set({ [sessionKey]: true });
+      if (ok) {
+        res = await doSave();
+        if (!res.ok) console.error("[TextBoi] save-history retry (session) failed:", res.status, await res.text().catch(() => ""));
+      } else {
+        console.error("[TextBoi] save-session failed, skipping save-history retry");
+      }
+    }
+  }
+}
+
+// 장치 세션이 이미 등록됐으면 스킵, 아니면 /save-session 1회 호출
+async function ensureDeviceSessionOnce(token, deviceId) {
+  const key = `tb_session_${deviceId}`;
+  const cached = await new Promise((r) => chrome.storage.local.get(key, (v) => r(v[key])));
+  if (cached) return;
+  const ok = await registerDeviceSession(token, deviceId);
+  // 성공한 경우에만 캐시 (실패 시 다음 요청에서 재시도)
+  if (ok) chrome.storage.local.set({ [key]: true });
+}
+
+async function registerDeviceSession(token, deviceId) {
+  try {
+    let payload;
+    try { payload = JSON.parse(atob(token.split(".")[1])); } catch { return false; }
+    const res = await fetch(`${SUPABASE_REST_API_URL}/save-session`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        user_id: payload.sub,
+        device_id: deviceId,
+        device_name: "chrome-extension",
+        user_agent: navigator.userAgent,
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      console.error("[TextBoi] save-session failed:", res.status, body);
+      return false;
+    }
+    console.log("[TextBoi] save-session success for device:", deviceId);
+    return true;
+  } catch (e) {
+    console.error("[TextBoi] save-session error:", e);
+    return false;
+  }
+}
+
+/* =========================
+   현재 플랜 조회
+========================= */
+async function fetchCurrentPlan() {
+  const token = await getAnyToken();
+  if (!token) return null;
+  try {
+    let payload;
+    try { payload = JSON.parse(atob(token.split(".")[1])); } catch { return null; }
+    const userId = payload.sub;
+    // 유효 토큰 우선, 만료된 경우 Supabase가 401 반환 → null 처리
+    const validToken = await getValidToken() || token;
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/user_plans?user_id=eq.${userId}&order=activated_at.desc&limit=1`,
+      { headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${validToken}` } }
+    );
+    if (!res.ok) return null;
+    const rows = await res.json();
+    return rows[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+/* =============================================
+   Stripe 고객 ID 조회 (stripe_customer_id가 있는 가장 최근 행)
+============================================= */
+async function fetchCustomerId() {
+  const token = await getAnyToken();
+  if (!token) return null;
+  try {
+    let payload;
+    try { payload = JSON.parse(atob(token.split(".")[1])); } catch { return null; }
+    const userId = payload.sub;
+    const validToken = await getValidToken() || token;
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/user_plans?user_id=eq.${userId}&stripe_customer_id=not.is.null&order=activated_at.desc&limit=1&select=stripe_customer_id`,
+      { headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${validToken}` } }
+    );
+    if (!res.ok) return null;
+    const rows = await res.json();
+    return rows[0]?.stripe_customer_id || null;
+  } catch {
+    return null;
+  }
+}
+
+/* =========================
+   Stripe Checkout
+========================= */
+async function handleStripeCheckout(plan) {
+  // Stripe Worker는 JWT 검증 없음 — 만료 토큰이라도 페이로드만 추출하면 됨
+  const token = await getAnyToken();
+  if (!token) return { ok: false, error: "Not logged in" };
+
+  let payload;
+  try { payload = JSON.parse(atob(token.split(".")[1])); } catch { return { ok: false, error: "Invalid token" }; }
+  const userId = payload.sub;
+  const email = payload.email || "";
+  const name = payload.user_metadata?.full_name || email;
+
+  try {
+    const res = await fetch(`${STRIPE_WORKER_URL}/api/stripe/checkout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ plan, user_id: userId, email, name }),
+    });
+    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+    const data = await res.json();
+    if (data.isUpgrade) return { ok: true, isUpgrade: true, message: data.message };
+    if (data.url) {
+      chrome.tabs.create({ url: data.url });
+      return { ok: true, url: data.url };
+    }
+    return { ok: false, error: data.error || "No URL" };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/* =========================
+   Stripe Customer Portal
+========================= */
+async function handleStripePortal() {
+  const token = await getAnyToken();
+  if (!token) return { ok: false, error: "Not logged in" };
+
+  const customerId = await fetchCustomerId();
+  if (!customerId) return { ok: false, error: "No Stripe customer ID found. Please complete a purchase first." };
+
+  try {
+    const res = await fetch(`${STRIPE_WORKER_URL}/api/stripe/create-portal-session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        stripe_customer_id: customerId,
+        return_url: "https://textboi.ai/billing-success",
+      }),
+    });
+    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+    const data = await res.json();
+    if (data.url) {
+      chrome.tabs.create({ url: data.url });
+      return { ok: true, url: data.url };
+    }
+    return { ok: false, error: data.error || "No URL" };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/* =========================
+   결제 완료 감지 (tabs.onUpdated)
+========================= */
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  if (changeInfo.status !== "complete") return;
+  const url = tab.url || "";
+  if (!url.startsWith("https://textboi.ai/billing-success")) return;
+
+  // 결제 완료 탭 즉시 닫기 (billing-success 페이지 오류 노출 방지)
+  chrome.tabs.remove(tabId).catch(() => {});
+
+  const sessionId = new URL(url).searchParams.get("session_id");
+  if (sessionId) {
+    try {
+      await fetch(`${STRIPE_WORKER_URL}/api/stripe/success-verify?session_id=${sessionId}`);
+    } catch {
+      // Webhook이 보완 — 조용히 무시
+    }
+  }
+
+  // 최신 플랜 조회 → 캐시 저장 → 팝업에 알림
+  const plan = await fetchCurrentPlan();
+  if (plan) chrome.storage.local.set({ tb_current_plan: plan });
+  chrome.runtime.sendMessage({ type: "PLAN_REFRESHED", plan }).catch(() => {});
+});
 

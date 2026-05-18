@@ -48,7 +48,8 @@ textBoi_extension/
     ├── storage.js             chrome.storage.local 래퍼 (settings, token)
     ├── constants.js           API URL, 앱 설정값
     ├── textCleanup.js         GPT 결과 후처리 (desktop에서 포팅)
-    └── langDetect.js          언어 감지 (franc → CDN 버전, desktop에서 포팅)
+    ├── langDetect.js          언어 감지 (franc → CDN 버전, desktop에서 포팅)
+    └── tokenCount.js          토큰 수 근사 계산 + 모델별 비용 배수
 ```
 
 ---
@@ -120,6 +121,8 @@ export const SUPABASE_URL =
 export const SUPABASE_ANON_KEY = "eyJhbG..."; // appConfig.ts와 동일
 export const SUPABASE_REST_API_URL =
   "https://supabase-rest-api.bangcoderpro.workers.dev";
+export const STRIPE_WORKER_URL =
+  "https://stripe-worker.bangcoderpro.workers.dev";
 ```
 
 URL·키 하드코딩 금지. 반드시 `utils/constants.js`에서 import.
