@@ -554,13 +554,19 @@ const ExplainPopup = {
 
   _render(changes) {
     if (!this.el) return;
-    this.el.innerHTML = changes.map((c) => `
-      <div class="tb-explain-entry">
-        ${c.original ? `<div class="tb-exp-original">${_escapeHtml(c.original)}</div>` : ""}
-        ${c.corrected ? `<div class="tb-exp-corrected">→ ${_escapeHtml(c.corrected)}</div>` : ""}
-        <div class="tb-exp-text">${_escapeHtml(c.explanation)}</div>
-      </div>
-    `).join("");
+    this.el.innerHTML = changes.map((c) => {
+      const hasOrig = !!c.original;
+      const hasCorr = !!c.corrected;
+      let header = "";
+      if (hasOrig && hasCorr) {
+        header = `<div class="tb-exp-header"><span class="tb-exp-original">${_escapeHtml(c.original)}</span><span class="tb-exp-arrow">→</span><span class="tb-exp-corrected">${_escapeHtml(c.corrected)}</span></div>`;
+      } else if (hasOrig) {
+        header = `<div class="tb-exp-header"><span class="tb-exp-original">${_escapeHtml(c.original)}</span></div>`;
+      } else if (hasCorr) {
+        header = `<div class="tb-exp-header"><span class="tb-exp-corrected">${_escapeHtml(c.corrected)}</span></div>`;
+      }
+      return `<div class="tb-explain-entry">${header}<div class="tb-exp-text">${_escapeHtml(c.explanation)}</div></div>`;
+    }).join("");
   },
 
   remove() {
@@ -864,6 +870,7 @@ const SidePanel = {
   remove() {
     closeActiveDropdown();
     ExplainPopup.remove();
+    if (this._cleanupDrag) { this._cleanupDrag(); this._cleanupDrag = null; }
     if (this._outsideClickHandler) {
       document.removeEventListener("mousedown", this._outsideClickHandler, true);
       this._outsideClickHandler = null;
@@ -1030,6 +1037,52 @@ const SidePanel = {
   _bindEvents(settings) {
     this.el.querySelector(".tb-close-btn").addEventListener("click", () => this.remove());
 
+    // ── 드래그 이동 ──
+    const dragHandle = this.el.querySelector(".tb-model-row");
+    let dragging = false, startX = 0, startY = 0, startLeft = 0, startTop = 0;
+
+    dragHandle.addEventListener("mousedown", (e) => {
+      // select·button 클릭은 드래그 제외
+      if (e.target.closest("select, button")) return;
+      dragging = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      const rect = this.el.getBoundingClientRect();
+      startLeft = rect.left;
+      startTop = rect.top;
+      dragHandle.style.cursor = "grabbing";
+      e.preventDefault();
+    });
+
+    const onMouseMove = (e) => {
+      if (!dragging || !this.el) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      const margin = 8;
+      const vw = window.innerWidth, vh = window.innerHeight;
+      const W = this.el.offsetWidth, H = this.el.offsetHeight;
+      const newLeft = Math.max(margin, Math.min(vw - W - margin, startLeft + dx));
+      const newTop = Math.max(margin, Math.min(vh - H - margin, startTop + dy));
+      this.el.style.left = `${newLeft}px`;
+      this.el.style.top = `${newTop}px`;
+    };
+
+    const onMouseUp = () => {
+      if (!dragging) return;
+      dragging = false;
+      dragHandle.style.cursor = "";
+    };
+
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+
+    // 패널 제거 시 전역 리스너 정리
+    const origRemove = this.remove.bind(this);
+    this._cleanupDrag = () => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+
     this.el.querySelectorAll(".tb-mode-btn").forEach((btn) => {
       btn.addEventListener("click", async () => {
         if (btn.dataset.mode === settings.mode) return;
@@ -1167,12 +1220,17 @@ const SidePanel = {
 
     originalEl.addEventListener("input", updateCharCount);
 
-    originalEl.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey) {
+    // Panel-level Enter handler (capture phase) — fires regardless of which child has focus.
+    // Cmd/Ctrl+Enter is reserved for Replace (global handler), so skip modifier combos.
+    // Skips <select> and <button> so dropdowns/buttons handle their own Enter.
+    this.el.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+        const active = document.activeElement;
+        if (active?.tagName === "SELECT" || active?.tagName === "BUTTON") return;
         e.preventDefault();
         this._rerun(settings);
       }
-    });
+    }, true);
 
     // 💡 idea icon click → ExplainPopup
     const resultEl = this.el.querySelector(".tb-result");
@@ -1465,39 +1523,13 @@ async function replaceSelectedTextInGoogleDocs(newText) {
     document.querySelector("iframe.docs-texteventtarget-iframe") ||
     document.querySelector('iframe[tabindex="1"]');
 
-  // ── Strategy 1: sync copy → sync paste (stays in user-gesture context) ──
-  // navigator.clipboard.writeText is async and loses user-gesture context,
-  // making execCommand('paste') fail. Using the deprecated-but-functional
-  // execCommand('copy') keeps everything synchronous and trusted.
-  let syncCopyOk = false;
-  try {
-    const ta = document.createElement("textarea");
-    Object.assign(ta.style, {
-      position: "fixed", top: "-9999px", left: "-9999px", opacity: "0",
-    });
-    ta.value = newText;
-    document.body.appendChild(ta);
-    ta.focus();
-    ta.select();
-    syncCopyOk = document.execCommand("copy");
-    ta.remove();
-  } catch {}
-
-  if (iframe && syncCopyOk) {
-    try {
-      iframe.focus();
-      iframe.contentDocument.body.focus();
-      const pasted = iframe.contentDocument.execCommand("paste");
-      if (pasted) {
-        showToast("✅ Replaced");
-        return;
-      }
-    } catch {}
-  }
-
-  // ── Strategy 2: ClipboardEvent with DataTransfer ──
+  // Write to clipboard without touching focus — Docs selection stays intact.
+  // (Hidden-textarea + ta.focus() approach was removed: it stole focus from the
+  //  Docs iframe, causing Docs to collapse the selection to a cursor, so paste
+  //  landed at the cursor position instead of replacing the selected text.)
   try { await navigator.clipboard.writeText(newText); } catch {}
 
+  // ── Strategy 1: ClipboardEvent with DataTransfer (no focus change) ──
   if (iframe) {
     try {
       const dt = new DataTransfer();
@@ -1517,7 +1549,18 @@ async function replaceSelectedTextInGoogleDocs(newText) {
     } catch {}
   }
 
-  // ── Final fallback: clipboard is already written, guide manual paste ──
+  // ── Strategy 2: execCommand paste (clipboard already written above) ──
+  if (iframe) {
+    try {
+      const pasted = iframe.contentDocument.execCommand("paste");
+      if (pasted) {
+        showToast("✅ Replaced");
+        return;
+      }
+    } catch {}
+  }
+
+  // ── Final fallback: guide manual paste ──
   showToast("Copied! Press Cmd+V to paste.", "error");
 }
 
@@ -1542,6 +1585,9 @@ function _handleCopyEvent() {
 
 // 선택 텍스트와 마지막 줄 rect를 구해 Bubble 표시 (mouseup / selectionchange 공용)
 function _showBubbleForSelection() {
+  // 패널이 열려있으면 버블 생성 안 함
+  if (SidePanel.el) return;
+
   // 1. 메인 document selection
   const sel = window.getSelection();
   let text = sel?.toString().trim() ?? "";
@@ -1717,9 +1763,58 @@ const DocsModule = {
 
       let _selTimer = null;
 
-      // 이중 Cmd+C → 자동 처리
+      // Docs iframe keydown (contentWindow 레벨) — Cmd+Enter 인터셉트
+      // contentWindow는 contentDocument보다 상위 → capture phase에서 먼저 실행됨
+      // Docs의 Cmd+Enter(줄바꿈 삽입) 핸들러가 contentDocument에 등록되어 있으므로
+      // contentWindow capture 핸들러에서 stopImmediatePropagation()으로 차단
+      iframe.contentWindow.addEventListener("keydown", (e) => {
+        if (!isContextAlive()) return;
+
+        // Esc: 패널/버블 닫기
+        if (e.key === "Escape") {
+          if (_activeDropdown) { closeActiveDropdown(); e.preventDefault(); return; }
+          if (SidePanel.el || Bubble.el) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            SidePanel.remove(); Bubble.remove();
+          }
+          return;
+        }
+
+        // Cmd/Ctrl+Enter: Replace
+        if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+          if (SidePanel.state === "done") {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            handleReplace(SidePanel.currentResult);
+          } else if (SidePanel.el) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+          }
+          return;
+        }
+
+        // Cmd+A: 전체 선택 → 버블 표시
+        // contentWindow capture는 contentDocument보다 먼저 실행되어 Docs 차단 우회 가능
+        if ((e.metaKey || e.ctrlKey) && e.key === "a") {
+          if (SidePanel.el) return;
+          DocsModule._pendingText = "";
+          clearTimeout(_selTimer);
+          _selTimer = setTimeout(() => {
+            if (!isContextAlive() || SidePanel.el) return;
+            const pos = DocsModule._lastMousePos ?? { x: window.innerWidth - 80, y: window.innerHeight / 2 };
+            const rect = { top: pos.y, bottom: pos.y, left: pos.x, right: pos.x };
+            DocsModule._showSelectionBubble(rect);
+          }, 400);
+          return;
+        }
+      }, true);
+
+      // Docs iframe keydown (contentDocument 레벨) — 이중 Cmd+C 감지
       iframe.contentDocument.addEventListener("keydown", async (e) => {
         if (!isContextAlive()) return;
+
+        // 이중 Cmd+C → 자동 처리
         if (!((e.metaKey || e.ctrlKey) && e.key === "c")) return;
         const now = Date.now();
         if ((now - lastCopyAt) < DOUBLE_COPY_THRESHOLD_MS) {
@@ -1736,12 +1831,12 @@ const DocsModule = {
         }
       }, true);
 
-      // 키보드 선택 감지 (Shift+Arrow 등) → 버블 표시
+      // 키보드 선택 감지 (Shift+Arrow) → 버블 표시
       iframe.contentDocument.addEventListener("keyup", (e) => {
         if (!isContextAlive()) return;
-        if (!e.shiftKey) return;
         const selKeys = ["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Home","End","PageUp","PageDown"];
-        if (!selKeys.includes(e.key)) return;
+        const isShiftSel = e.shiftKey && selKeys.includes(e.key);
+        if (!isShiftSel) return;
         DocsModule._pendingText = "";
         clearTimeout(_selTimer);
         _selTimer = setTimeout(() => {
@@ -1761,6 +1856,7 @@ const DocsModule = {
       });
       obs.observe(document.body, { childList: true, subtree: true });
     }
+
   },
 
   // Docs canvas용 버블 표시
@@ -1836,26 +1932,41 @@ if (isGoogleDocsLike()) {
 // 전역 키보드 단축키 (bubble phase — Docs keydown과 분리)
 // ═══════════════════════════════════════════════════════
 
-document.addEventListener("keydown", (e) => {
+// capture phase + window 레벨 — Slides/Docs document 핸들러보다 먼저 실행
+window.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
-    if (_activeDropdown) { closeActiveDropdown(); return; }
-    SidePanel.remove();
-    MiniPopover.remove();
-    Bubble.remove();
+    if (_activeDropdown) { closeActiveDropdown(); e.stopPropagation(); return; }
+    if (SidePanel.el || MiniPopover.el || Bubble.el) {
+      e.stopPropagation();
+      SidePanel.remove();
+      MiniPopover.remove();
+      Bubble.remove();
+    }
     return;
   }
 
   // Cmd/Ctrl+Enter: Replace 실행
+  // stopImmediatePropagation으로 Slides 프레젠테이션 모드 진입 차단
   if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
     if (SidePanel.state === "done") {
       e.preventDefault();
+      e.stopImmediatePropagation();
       handleReplace(SidePanel.currentResult);
-    } else if (MiniPopover.state === "done") {
+      return;
+    }
+    if (MiniPopover.state === "done") {
       e.preventDefault();
+      e.stopImmediatePropagation();
       handleReplace(MiniPopover.currentResult);
+      return;
+    }
+    // 패널이 열려있지만 아직 done 아닌 경우 — Slides 전체화면 차단만
+    if (SidePanel.el || MiniPopover.el) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
     }
   }
-}, false);
+}, true);
 
 // ═══════════════════════════════════════════════════════
 // 메시지 수신 (background → content)

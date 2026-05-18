@@ -385,7 +385,39 @@ Rules:
   const data = await res.json();
   const content = data.choices?.[0]?.message?.content ?? "{}";
   const parsed = JSON.parse(content);
+
+  // user_diff 저장 (fire-and-forget)
+  saveDiff({ diffHtml, systemPrompt, content, locale, model, rewritePrompt, token }).catch(() => {});
+
   return { type: "success", changes: parsed.changes ?? [] };
+}
+
+async function saveDiff({ diffHtml, systemPrompt, content, locale, model, rewritePrompt, token }) {
+  try {
+    const deviceId = await getDeviceId();
+    await ensureDeviceSessionOnce(token, deviceId);
+    const res = await fetch(`${SUPABASE_REST_API_URL}/save-diff`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        "x-device-id": deviceId,
+      },
+      body: JSON.stringify({
+        diffhtml_text: diffHtml,
+        diff_prompt_text: systemPrompt,
+        diffexp_text: content,
+        token_usage_dffprompt: countTokens(systemPrompt),
+        token_usage_diffexp: countTokens(content),
+        locale,
+        model,
+        rewrite_prompt: rewritePrompt,
+      }),
+    });
+    if (!res.ok) console.error("[TextBoi] save-diff failed:", res.status, await res.text().catch(() => ""));
+  } catch (e) {
+    console.error("[TextBoi] save-diff error:", e);
+  }
 }
 
 /* =========================
@@ -462,6 +494,9 @@ async function handlePostLogin() {
   const deviceId = await getDeviceId();
 
   // 1. public.users upsert
+  const chromeVersionMatch = navigator.userAgent.match(/Chrome\/([\d.]+)/);
+  const browserVersion = chromeVersionMatch ? chromeVersionMatch[1] : null;
+
   try {
     await fetch(`${SUPABASE_URL}/rest/v1/users`, {
       method: "POST",
@@ -479,6 +514,8 @@ async function handlePostLogin() {
         provider,
         platform: "chrome-extension",
         app_version: chrome.runtime.getManifest().version,
+        browser_version: browserVersion,
+        locale: navigator.language,
         last_login_at: new Date().toISOString(),
       }),
     });

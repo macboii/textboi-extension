@@ -39,7 +39,57 @@ const tryAttach = () => {
 
   let _selTimer = null;
 
-  // 이중 Cmd+C → 클립보드에서 텍스트 읽어 자동 처리
+  // ── Handler 1: contentWindow capture (Docs 핸들러보다 먼저 실행) ──
+  // contentWindow > contentDocument in capture phase propagation order.
+  // Docs registers its key handlers on contentDocument → our contentWindow handler fires first.
+  // Use stopImmediatePropagation() to prevent Docs from seeing Cmd+Enter (page break).
+  iframe.contentWindow.addEventListener("keydown", (e) => {
+    if (!isContextAlive()) return;
+
+    // Esc: 패널/버블 닫기
+    if (e.key === "Escape") {
+      if (_activeDropdown) { closeActiveDropdown(); e.preventDefault(); return; }
+      if (SidePanel.el || Bubble.el) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        SidePanel.remove(); Bubble.remove();
+      }
+      return;
+    }
+
+    // Cmd/Ctrl+Enter → Replace (Docs 기본 동작인 페이지 삽입 차단)
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      if (SidePanel.state === "done") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        handleReplace(SidePanel.currentResult);
+      } else if (SidePanel.el) {
+        // 패널 열림 중 (loading/streaming) — Docs 기본 동작만 차단
+        e.preventDefault();
+        e.stopImmediatePropagation();
+      }
+      return;
+    }
+
+    // Cmd+A → 전체 선택 후 버블 표시
+    // contentWindow capture는 Docs의 contentDocument 핸들러보다 먼저 실행됨.
+    // keyup에서는 Docs가 stopImmediatePropagation()으로 차단하므로 keydown에서 감지.
+    // 400ms 딜레이: Docs가 select-all을 완료한 후 버블을 표시하기 위함.
+    if ((e.metaKey || e.ctrlKey) && e.key === "a") {
+      if (SidePanel.el) return;
+      DocsModule._pendingText = "";
+      clearTimeout(_selTimer);
+      _selTimer = setTimeout(() => {
+        if (!isContextAlive() || SidePanel.el) return;
+        const pos = DocsModule._lastMousePos ?? { x: window.innerWidth - 80, y: window.innerHeight / 2 };
+        DocsModule._showSelectionBubble({ top: pos.y, bottom: pos.y, left: pos.x, right: pos.x });
+      }, 400);
+      return;
+    }
+  }, true);
+
+  // ── Handler 2: contentDocument capture — 이중 Cmd+C 감지 ──
+  // Docs가 실제로 클립보드에 복사하도록 전파 허용 (stopPropagation 미사용)
   iframe.contentDocument.addEventListener("keydown", async (e) => {
     if (!isContextAlive()) return;
     if (!((e.metaKey || e.ctrlKey) && e.key === "c")) return;
@@ -209,7 +259,18 @@ const SomeComponent = {
     this.el = document.createElement('div');
     // ...
     document.body.appendChild(this.el);
-    // 패널 열릴 때 .tb-original textarea에 포커스 → Enter 키가 패널 submit으로 동작
+    // 패널 레벨 Enter 핸들러 (capture phase) — textarea 포커스 여부 무관하게 rerun 실행
+    // Cmd/Ctrl+Enter는 전역 핸들러(Replace)가 처리하므로 modifier 조합은 skip
+    // <select>, <button>은 자체 Enter 처리 — skip
+    this.el.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+        const active = document.activeElement;
+        if (active?.tagName === "SELECT" || active?.tagName === "BUTTON") return;
+        e.preventDefault();
+        this._rerun(settings);
+      }
+    }, true); // capture phase
+
     requestAnimationFrame(() => {
       this.el?.classList.add('tb-panel--open');
       this.el?.querySelector('.tb-original')?.focus();
@@ -225,30 +286,50 @@ const SomeComponent = {
 
 ## 키보드 단축키 등록 원칙
 
-content.js 전역에 keydown 리스너 하나만 등록. 내부에서 분기.
+content.js 전역에 keydown 리스너 하나만 등록. **`window` capture phase**로 등록해 Slides 프레젠테이션 모드 진입 등 브라우저/사이트 기본 동작보다 먼저 실행.
 
 ```javascript
-document.addEventListener('keydown', (e) => {
+// window capture phase — document 핸들러보다 먼저 실행 (Slides 기본 동작 차단 가능)
+window.addEventListener('keydown', (e) => {
   // Esc
   if (e.key === 'Escape') {
-    SidePanel.remove(); MiniPopover.remove(); Bubble.remove();
+    if (_activeDropdown) { closeActiveDropdown(); e.stopPropagation(); return; }
+    if (SidePanel.el || MiniPopover.el || Bubble.el) {
+      e.stopPropagation();
+      SidePanel.remove(); MiniPopover.remove(); Bubble.remove();
+    }
     return;
   }
-  
+
   // Cmd/Ctrl+Enter — Replace
   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-    const readyPanel = SidePanel.state === 'done';
-    const readyPopover = MiniPopover.state === 'done';
-    if (readyPanel || readyPopover) {
+    if (SidePanel.state === 'done') {
       e.preventDefault();
-      handleReplace(readyPanel ? SidePanel.currentResult : MiniPopover.currentResult);
+      e.stopImmediatePropagation(); // Slides 전체화면 차단
+      handleReplace(SidePanel.currentResult);
+      return;
+    }
+    if (MiniPopover.state === 'done') {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      handleReplace(MiniPopover.currentResult);
+      return;
+    }
+    // 패널이 열려있지만 done 아닌 경우 — 기본 동작만 차단
+    if (SidePanel.el || MiniPopover.el) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
     }
   }
-  
-  // Docs keydown Cmd+C (isGoogleDocsLike()인 경우)
-  // ← DocsModule.init() 안에서 별도 capture listener로 처리
-}, false); // bubble phase (Docs 단축키와 분리)
+
+  // Docs keydown Cmd+C / Cmd+Enter (isGoogleDocsLike()인 경우)
+  // ← DocsModule.init()의 iframe.contentWindow/contentDocument 리스너로 처리
+}, true); // capture phase
 ```
+
+**`window` vs `document` 등록 이유**: Slides 등에서 Cmd+Enter가 프레젠테이션 모드를 트리거하는 기본 동작을 차단하려면 `document` 핸들러보다 먼저 실행해야 함. `window` capture가 `document` capture보다 선행.
+
+**`stopImmediatePropagation()` vs `stopPropagation()`**: `stopPropagation()`은 같은 element의 다른 핸들러를 막지 못함. `stopImmediatePropagation()`은 같은 element의 이후 핸들러도 차단. Replace 실행 시 반드시 `stopImmediatePropagation()` 사용.
 
 ## 스트리밍 수신 패턴 (content.js)
 
@@ -329,6 +410,16 @@ function getSelectionEndRect(range, frameOffset) {
 
 mouseup과 selectionchange(키보드 선택) 양쪽에서 Bubble을 표시하는 통합 함수.  
 `_isMouseDown` 플래그로 드래그 중 selectionchange 발화를 차단.
+
+**패널 열림 중 버블 억제**: `SidePanel.el`이 존재하면 최상단에서 즉시 return.  
+패널 클릭 시 page selection이 살아있거나 `selectionchange`가 발화해도 버블이 생기지 않음.
+
+```javascript
+function _showBubbleForSelection() {
+  if (SidePanel.el) return; // 패널 열려있는 동안은 버블 생성 안 함
+  // ...
+}
+```
 
 ```javascript
 // initCopyDetector() 안에서
