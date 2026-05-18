@@ -396,25 +396,54 @@ async function saveDiff({ diffHtml, systemPrompt, content, locale, model, rewrit
   try {
     const deviceId = await getDeviceId();
     await ensureDeviceSessionOnce(token, deviceId);
-    const res = await fetch(`${SUPABASE_REST_API_URL}/save-diff`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-        "x-device-id": deviceId,
-      },
-      body: JSON.stringify({
-        diffhtml_text: diffHtml,
-        diff_prompt_text: systemPrompt,
-        diffexp_text: content,
-        token_usage_dffprompt: countTokens(systemPrompt),
-        token_usage_diffexp: countTokens(content),
-        locale,
-        model,
-        rewrite_prompt: rewritePrompt,
-      }),
-    });
-    if (!res.ok) console.error("[TextBoi] save-diff failed:", res.status, await res.text().catch(() => ""));
+
+    const multiplier = getModelMultiplier(model);
+    const tok_html = countTokens(diffHtml);
+    const tok_prompt = countTokens(systemPrompt);
+    const tok_exp = countTokens(content);
+    const tok_total = Math.round((tok_html + tok_prompt + tok_exp) * multiplier);
+
+    const payload = {
+      diffhtml_text: diffHtml,
+      diff_prompt_text: systemPrompt,
+      diffexp_text: content,
+      token_usage_diffhtml: tok_html,
+      token_usage_dffprompt: tok_prompt,
+      token_usage_diffexp: tok_exp,
+      token_usage_diff_total: tok_total,
+      locale,
+      model,
+      rewrite_prompt: rewritePrompt,
+    };
+
+    const doSave = () =>
+      fetch(`${SUPABASE_REST_API_URL}/save-diff`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          "x-device-id": deviceId,
+        },
+        body: JSON.stringify(payload),
+      });
+
+    let res = await doSave();
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      console.error("[TextBoi] save-diff failed:", res.status, errText);
+
+      // 장치 세션 미등록 → 스탈 캐시 제거 후 /save-session 재등록, 재시도
+      if (res.status === 401 && (errText.includes("DEVICE_NOT_AUTHORIZED") || errText.includes("device"))) {
+        const sessionKey = `tb_session_${deviceId}`;
+        chrome.storage.local.remove(sessionKey);
+        const ok = await registerDeviceSession(token, deviceId);
+        if (ok) chrome.storage.local.set({ [sessionKey]: true });
+        if (ok) {
+          res = await doSave();
+          if (!res.ok) console.error("[TextBoi] save-diff retry failed:", res.status, await res.text().catch(() => ""));
+        }
+      }
+    }
   } catch (e) {
     console.error("[TextBoi] save-diff error:", e);
   }
