@@ -95,6 +95,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 });
 
+
 /* =========================
    단축키 처리
 ========================= */
@@ -172,11 +173,17 @@ async function handleProcessText(msg, tabId, signal) {
       return;
     }
     guestRemaining = quota.remaining ?? null;
+    // 게스트는 gpt-4o-mini 고정
+    msg = { ...msg, model: "gpt-4o-mini" };
   } else {
     const quota = await checkUserQuota(token, deviceId);
     if (!quota.ok) {
       chrome.tabs.sendMessage(tabId, { type: "QUOTA_EXCEEDED" });
       return;
+    }
+    // free plan은 gpt-4o-mini 고정
+    if (quota.planType === "free") {
+      msg = { ...msg, model: "gpt-4o-mini" };
     }
   }
 
@@ -471,19 +478,19 @@ async function checkUserQuota(token, deviceId) {
   try {
     const now = encodeURIComponent(new Date().toISOString());
     const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/user_plans?plan_status=in.(active,trialing,scheduled)&billing_period_end=gt.${now}&select=token_quota,token_used&order=activated_at.desc&limit=1`,
+      `${SUPABASE_URL}/rest/v1/user_plans?plan_status=in.(active,trialing,scheduled)&billing_period_end=gt.${now}&select=token_quota,token_used,plan_type&order=activated_at.desc&limit=1`,
       { headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${token}` } }
     );
     const rows = await res.json();
     if (!Array.isArray(rows) || rows.length === 0) {
       // 플랜 없음 → 이번 달 최초 → ensure-free-plan 생성 후 허용
       ensureFreePlanIfNeeded(token, deviceId).catch(console.error);
-      return { ok: true };
+      return { ok: true, planType: "free" };
     }
-    const { token_quota, token_used } = rows[0];
-    return { ok: token_used < token_quota, used: token_used, quota: token_quota };
+    const { token_quota, token_used, plan_type } = rows[0];
+    return { ok: token_used < token_quota, used: token_used, quota: token_quota, planType: plan_type ?? "free" };
   } catch {
-    return { ok: true }; // 네트워크 오류 시 허용
+    return { ok: true, planType: "free" }; // 네트워크 오류 시 허용 (free로 간주)
   }
 }
 

@@ -11,6 +11,15 @@ let lastSelectionRect = null;
 let lastCopyAt = 0;
 let _activeDropdown = null;
 let _lastBubbleState = null; // { text, rect } — 패널 닫힐 때 버블 복원용
+let _extensionEnabled = true; // tb_enabled 스토리지 값 — false면 트리거/버블 전부 차단
+
+// Mac 여부: userAgentData 우선, 폴백으로 platform/userAgent
+const _isMac = (() => {
+  if (navigator.userAgentData?.platform) return /mac/i.test(navigator.userAgentData.platform);
+  return /mac/i.test(navigator.platform || navigator.userAgent);
+})();
+const _modSymbol = _isMac ? "⌘" : "Ctrl"; // UI 표시용 (⌘ / Ctrl)
+const _modLabel  = _isMac ? "Cmd" : "Ctrl"; // 텍스트 메시지용
 
 // ═══════════════════════════════════════════════════════
 // 사이트 감지
@@ -146,6 +155,14 @@ function closeActiveDropdown() {
     document.removeEventListener("mousedown", _activeDropdown.outside, true);
     document.removeEventListener("keydown", _activeDropdown.keydown, true);
     _activeDropdown = null;
+    // 드롭다운 닫힌 후 포커스가 body나 트리거 버튼으로 빠져나가면
+    // 이후 Enter가 패널 캡처 핸들러에 도달하지 않으므로 textarea로 복귀
+    requestAnimationFrame(() => {
+      const textarea = SidePanel.el?.querySelector(".tb-original");
+      if (textarea && !textarea.contains(document.activeElement)) {
+        textarea.focus({ preventScroll: true });
+      }
+    });
   }
 }
 
@@ -671,6 +688,9 @@ window.addEventListener("offline", () => {
 });
 
 async function onDoubleCopy(text) {
+  if (!_extensionEnabled) return;
+  // 토큰/게스트 한도 초과 상태면 새 요청 차단 (패널이 이미 열려있으면 그대로 유지)
+  if (SidePanel._quotaExceeded) return;
   Bubble.remove();
   SidePanel._resultCache = null; // 이중복사는 항상 새 결과 요청
   await SidePanel.show(text);
@@ -712,8 +732,15 @@ const SidePanel = {
       this._updateSourceLang(text);
 
       const settings = await getSettings();
-      this._populateSelects(settings);
-      this._bindEvents(settings);
+      // 플랜/로그인 상태 확인 (모델 셀렉터 잠금 여부 결정)
+      const [token, currentPlan] = await Promise.all([
+        new Promise((r) => chrome.storage.local.get("tb_access_token", ({ tb_access_token }) => r(tb_access_token || null))),
+        new Promise((r) => chrome.storage.local.get("tb_current_plan", ({ tb_current_plan }) => r(tb_current_plan || null))),
+      ]);
+      const isGuestOrFree = !token || !currentPlan || currentPlan.plan_type === "free";
+      if (isGuestOrFree) settings.model = "gpt-4o-mini";
+      this._populateSelects(settings, isGuestOrFree);
+      this._bindEvents(settings, isGuestOrFree);
 
       // 동일 텍스트 캐시 복원 (버블 클릭으로 재오픈 시 이전 결과 유지)
       const cache = this._resultCache;
@@ -752,7 +779,8 @@ const SidePanel = {
 
     Object.assign(this.el.style, {
       top: `${top}px`,
-      left: `${Math.max(margin, left)}px`,
+      left: `${left}px`,
+      width: `${W}px`,
       height: `${panelH}px`,
     });
   },
@@ -815,10 +843,16 @@ const SidePanel = {
     if (sp) sp.style.setProperty("display", "none", "important");
   },
 
+  _disableRunButtons() {
+    this.el?.querySelector(".tb-submit-btn")?.setAttribute("disabled", "");
+    this.el?.querySelector(".tb-retry-btn")?.setAttribute("disabled", "");
+  },
+
   showLoginPrompt() {
     if (!this.el) return;
     this._quotaExceeded = true;
     this.state = "error"; // Cmd+Enter Replace 차단
+    this._disableRunButtons();
     this.el.querySelector(".tb-spinner")?.remove();
     const resultEl = this.el.querySelector(".tb-result");
     if (!resultEl) return;
@@ -833,6 +867,7 @@ const SidePanel = {
     if (!this.el) return;
     this._quotaExceeded = true;
     this.state = "error"; // Cmd+Enter Replace 차단
+    this._disableRunButtons();
     this.el.querySelector(".tb-spinner")?.remove();
     const resultEl = this.el.querySelector(".tb-result");
     if (!resultEl) return;
@@ -878,16 +913,17 @@ const SidePanel = {
     if (this.el) {
       this.el.classList.remove("tb-panel--open");
       const el = this.el;
-      const savedBubble = _lastBubbleState; // 클로저로 캡처
       setTimeout(() => {
         el.remove();
-        // 패널 닫힌 후 버블 복원 (새 버블이 없고, 새 패널도 없을 때만)
-        if (savedBubble && !SidePanel.el && !Bubble.el && isContextAlive()) {
-          Bubble.show(savedBubble.rect, savedBubble.text);
+        // 패널 닫힌 후 버블을 기본 위치(우측 하단)에 복원
+        if (!SidePanel.el && isContextAlive()) {
+          Bubble.showDefault();
         }
       }, 220);
       this.el = null;
     }
+    // 패널이 닫히면 quota 차단 상태 해제 (다음 이중복사 허용)
+    this._quotaExceeded = false;
     if (!isContextAlive()) return;
     try {
       chrome.runtime.sendMessage({ type: "ABORT_STREAM" }).catch(() => {});
@@ -899,8 +935,7 @@ const SidePanel = {
       (m) => `<option value="${m.id}">${m.label}</option>`
     ).join("");
 
-    const isMac = navigator.platform.includes("Mac");
-    const mod = isMac ? "⌘" : "Ctrl";
+    const mod = _modSymbol;
 
     return `
       <div class="tb-model-row">
@@ -988,14 +1023,22 @@ const SidePanel = {
     dot.style.background = colors[modelId] || "#636366";
   },
 
-  _populateSelects(settings) {
+  _populateSelects(settings, isGuestOrFree = false) {
     this._currentMode = settings.mode || "translate";
     this._currentRewritePrompt = settings.rewritePrompt || "";
 
     const modelSel = this.el.querySelector(".tb-model-select");
     if (modelSel) {
-      modelSel.value = settings.model;
-      this._updateModelDot(settings.model);
+      if (isGuestOrFree) {
+        modelSel.value = "gpt-4o-mini";
+        modelSel.disabled = true;
+        modelSel.title = "gpt-4o-mini only (upgrade to use other models)";
+      } else {
+        modelSel.value = settings.model;
+        modelSel.disabled = false;
+        modelSel.title = "";
+      }
+      this._updateModelDot(isGuestOrFree ? "gpt-4o-mini" : settings.model);
     }
 
     const targetLangBtn = this.el.querySelector(".tb-target-lang-btn");
@@ -1034,7 +1077,7 @@ const SidePanel = {
     });
   },
 
-  _bindEvents(settings) {
+  _bindEvents(settings, isGuestOrFree = false) {
     this.el.querySelector(".tb-close-btn").addEventListener("click", () => this.remove());
 
     // ── 드래그 이동 ──
@@ -1060,9 +1103,10 @@ const SidePanel = {
       const dy = e.clientY - startY;
       const margin = 8;
       const vw = window.innerWidth, vh = window.innerHeight;
-      const W = this.el.offsetWidth, H = this.el.offsetHeight;
-      const newLeft = Math.max(margin, Math.min(vw - W - margin, startLeft + dx));
-      const newTop = Math.max(margin, Math.min(vh - H - margin, startTop + dy));
+      // getBoundingClientRect()는 zoom 적용 후 시각적 크기를 반환
+      const rect = this.el.getBoundingClientRect();
+      const newLeft = Math.max(margin, Math.min(vw - rect.width - margin, startLeft + dx));
+      const newTop = Math.max(margin, Math.min(vh - rect.height - margin, startTop + dy));
       this.el.style.left = `${newLeft}px`;
       this.el.style.top = `${newTop}px`;
     };
@@ -1136,6 +1180,7 @@ const SidePanel = {
     });
 
     this.el.querySelector(".tb-model-select").addEventListener("change", async (e) => {
+      if (isGuestOrFree) { e.target.value = "gpt-4o-mini"; return; }
       settings.model = e.target.value;
       this._updateModelDot(e.target.value);
       await saveSettings({ model: e.target.value });
@@ -1184,7 +1229,7 @@ const SidePanel = {
       // restore empty guide
       const wrap = this.el.querySelector(".tb-result-wrap");
       if (wrap && !wrap.querySelector(".tb-empty-guide")) {
-        const mod = /mac/i.test(navigator.platform) ? "⌘" : "Ctrl";
+        const mod = _modSymbol;
         const guide = document.createElement("div");
         guide.className = "tb-empty-guide";
         guide.innerHTML = `
@@ -1397,54 +1442,91 @@ const MiniPopover = {
 
 const Bubble = {
   el: null,
+  _text: null,       // null = 기본 위치(선택 없음), string = 선택 텍스트
+  _onClickFn: null,  // Docs 등 커스텀 클릭 핸들러
 
-  show(rect, text) {
-    if (!isContextAlive()) return;
-    this.remove();
+  _defaultPos() {
+    const size = 36, margin = 20;
+    return {
+      top: `${window.innerHeight - size - margin}px`,
+      left: `${window.innerWidth - size - margin}px`,
+    };
+  },
 
-    this.el = document.createElement("div");
-    this.el.id = "textboi-bubble";
-
+  _createEl() {
+    if (!isContextAlive()) return null;
     let iconUrl;
-    try { iconUrl = chrome.runtime.getURL("icons/icon48.png"); } catch { return; }
+    try { iconUrl = chrome.runtime.getURL("icons/icon48.png"); } catch { return null; }
+
+    const el = document.createElement("div");
+    el.id = "textboi-bubble";
     const img = document.createElement("img");
     img.src = iconUrl;
     img.style.cssText = "width:100% !important; height:100% !important; object-fit:cover !important; border-radius:50% !important; display:block !important; pointer-events:none !important;";
-    this.el.appendChild(img);
+    el.appendChild(img);
 
-    const size = 36; // bubble diameter
-    // 선택 영역 우측 하단 바로 옆에 붙임
-    const top = rect.bottom - size / 2;
-    const left = Math.min(rect.right + 4, window.innerWidth - size - 8);
-
-    Object.assign(this.el.style, {
-      top: `${Math.max(8, top)}px`,
-      left: `${Math.max(8, left)}px`,
-    });
-
-    this.el.addEventListener("mousedown", (e) => {
+    el.addEventListener("mousedown", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      Bubble.remove();
+      const text = this._text || "";
+      const fn = this._onClickFn;
+      this.remove(); // 패널 열기 전 DOM에서 제거
+      if (fn) { fn(text); return; }
       if (SidePanel.el) {
-        // 패널 이미 열려있으면 textarea만 업데이트
-        const ta = SidePanel.el.querySelector(".tb-original");
-        if (ta) {
-          ta.value = text;
-          ta.dispatchEvent(new Event("input"));
-          SidePanel._updateSourceLang(text);
+        if (text) {
+          const ta = SidePanel.el.querySelector(".tb-original");
+          if (ta) { ta.value = text; ta.dispatchEvent(new Event("input")); SidePanel._updateSourceLang(text); }
         }
       } else {
         SidePanel.show(text);
       }
     });
-
-    document.body.appendChild(this.el);
+    return el;
   },
 
+  // 페이지 로드 시 우측 하단에 버블 초기화
+  init() {
+    if (!isContextAlive() || this.el) return;
+    const el = this._createEl();
+    if (!el) return;
+    this.el = el;
+    Object.assign(el.style, this._defaultPos());
+    document.body.appendChild(el);
+    this._text = null;
+    this._onClickFn = null;
+  },
+
+  // 선택 해제 또는 패널 닫힐 때: 우측 하단으로 이동
+  showDefault() {
+    if (!isContextAlive() || !_extensionEnabled) return;
+    if (!this.el) { this.init(); return; }
+    Object.assign(this.el.style, this._defaultPos());
+    this._text = null;
+    this._onClickFn = null;
+  },
+
+  // 텍스트 선택 시: 선택 영역 근처로 이동
+  show(rect, text, onClickFn) {
+    if (!isContextAlive() || !_extensionEnabled) return;
+    if (!this.el) this.init();
+    if (!this.el) return;
+    const size = 36;
+    const top = rect.bottom - size / 2;
+    const left = Math.min(rect.right + 4, window.innerWidth - size - 8);
+    Object.assign(this.el.style, {
+      top: `${Math.max(8, top)}px`,
+      left: `${Math.max(8, left)}px`,
+    });
+    this._text = text || null;
+    this._onClickFn = onClickFn || null;
+  },
+
+  // 패널 열릴 때 / 익스텐션 비활성화 시: DOM에서 완전 제거
   remove() {
     this.el?.remove();
     this.el = null;
+    this._text = null;
+    this._onClickFn = null;
   },
 };
 
@@ -1561,7 +1643,7 @@ async function replaceSelectedTextInGoogleDocs(newText) {
   }
 
   // ── Final fallback: guide manual paste ──
-  showToast("Copied! Press Cmd+V to paste.", "error");
+  showToast(`Copied! Press ${_modLabel}+V to paste.`, "error");
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1585,6 +1667,7 @@ function _handleCopyEvent() {
 
 // 선택 텍스트와 마지막 줄 rect를 구해 Bubble 표시 (mouseup / selectionchange 공용)
 function _showBubbleForSelection() {
+  if (!_extensionEnabled) return;
   // 패널이 열려있으면 버블 생성 안 함
   if (SidePanel.el) return;
 
@@ -1620,7 +1703,7 @@ function _showBubbleForSelection() {
     }
   }
 
-  if (!text) { Bubble.remove(); _lastBubbleState = null; return; }
+  if (!text) { Bubble.showDefault(); _lastBubbleState = null; return; }
   if (rect) lastSelectionRect = rect;
   if (!lastSelectionRect) return;
   _lastBubbleState = { text, rect: lastSelectionRect }; // 버블 상태 저장
@@ -1642,7 +1725,7 @@ function _attachIframeListeners() {
       if (!doc || !doc.body) continue;
       // capture phase: Gmail이 stopPropagation 하더라도 먼저 받음
       doc.addEventListener("copy", _handleCopyEvent, true);
-      doc.addEventListener("mousedown", () => Bubble.remove());
+      doc.addEventListener("mousedown", () => Bubble.showDefault());
       doc.addEventListener("mouseup", _handleMouseUp);
       frame._tbAttached = true;
     } catch {}
@@ -1662,7 +1745,7 @@ function initCopyDetector() {
       e.target.closest?.("#textboi-bubble")
     );
     if (_mouseDownInUI) return;
-    Bubble.remove();
+    Bubble.showDefault();
     _lastBubbleState = null; // 페이지 컨텐츠 클릭 = 새 선택 시작, 이전 버블 무효화
   });
   document.addEventListener("mouseup", () => {
@@ -1681,7 +1764,7 @@ function initCopyDetector() {
       if (document.activeElement?.closest?.("#textboi-panel")) return;
       const sel = window.getSelection();
       const text = sel?.toString().trim() ?? "";
-      if (text.length < 2) { Bubble.remove(); return; }
+      if (text.length < 2) { Bubble.showDefault(); return; }
       _showBubbleForSelection();
     }, 250);
   });
@@ -1738,7 +1821,7 @@ const DocsModule = {
       ) return;
       startX = e.clientX;
       startY = e.clientY;
-      Bubble.remove();
+      Bubble.showDefault();
       _lastBubbleState = null;
       DocsModule._pendingText = "";
     }, true);
@@ -1773,10 +1856,11 @@ const DocsModule = {
         // Esc: 패널/버블 닫기
         if (e.key === "Escape") {
           if (_activeDropdown) { closeActiveDropdown(); e.preventDefault(); return; }
-          if (SidePanel.el || Bubble.el) {
+          if (SidePanel.el || Bubble._text !== null) {
             e.preventDefault();
             e.stopImmediatePropagation();
-            SidePanel.remove(); Bubble.remove();
+            SidePanel.remove();
+            if (Bubble._text !== null) Bubble.showDefault();
           }
           return;
         }
@@ -1859,62 +1943,25 @@ const DocsModule = {
 
   },
 
-  // Docs canvas용 버블 표시
-  // _pendingText에 미리 복사된 텍스트가 있으면 사용, 없으면 클릭 시 user-gesture로 복사 시도
+  // Docs canvas용 버블 표시 — 선택 영역 근처로 이동 (Bubble.show 재사용)
   _showSelectionBubble(rect) {
-    if (!isContextAlive()) return;
-    Bubble.remove();
-    // Docs 버블 상태 저장 (패널 닫힐 때 복원용 — text는 클릭 시점에 확정)
+    if (!_extensionEnabled || !isContextAlive()) return;
     _lastBubbleState = { text: DocsModule._pendingText || "", rect };
 
-    const el = document.createElement("div");
-    el.id = "textboi-bubble";
-
-    const img = document.createElement("img");
-    let iconUrl;
-    try { iconUrl = chrome.runtime.getURL("icons/icon48.png"); } catch { return; }
-    img.src = iconUrl;
-    img.style.cssText = "width:100% !important; height:100% !important; object-fit:cover !important; border-radius:50% !important; display:block !important; pointer-events:none !important;";
-    el.appendChild(img);
-
-    const size = 36;
-    const top = rect.bottom - size / 2;
-    const left = Math.min(rect.right + 4, window.innerWidth - size - 8);
-    Object.assign(el.style, {
-      top: `${Math.max(8, top)}px`,
-      left: `${Math.max(8, left)}px`,
-    });
-
-    el.addEventListener("mousedown", async (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      DocsModule._skipNextMouseup = true; // 이 클릭의 mouseup이 새 버블을 생성하지 않도록
-      el.remove();
-      Bubble.el = null;
-
-      let text = DocsModule._pendingText;
-      DocsModule._pendingText = "";
-
+    Bubble.show(rect, DocsModule._pendingText || "", async (capturedText) => {
+      DocsModule._skipNextMouseup = true; // mouseup이 새 버블을 생성하지 않도록
+      let text = capturedText;
       if (!text) text = await DocsModule._execCopyAndCapture();
       if (!text) text = getSelectedTextUnified();
-
-      // 텍스트 추출 성공 여부와 무관하게 패널을 항상 열기
       if (SidePanel.el) {
         if (text) {
           const ta = SidePanel.el.querySelector(".tb-original");
-          if (ta) {
-            ta.value = text;
-            ta.dispatchEvent(new Event("input"));
-            SidePanel._updateSourceLang(text);
-          }
+          if (ta) { ta.value = text; ta.dispatchEvent(new Event("input")); SidePanel._updateSourceLang(text); }
         }
       } else {
         SidePanel.show(text);
       }
     });
-
-    document.body.appendChild(el);
-    Bubble.el = el;
   },
 };
 
@@ -1928,6 +1975,22 @@ if (isGoogleDocsLike()) {
   initCopyDetector();
 }
 
+// Extension on/off 상태 초기화 + 버블 초기화
+chrome.storage.local.get("tb_enabled", ({ tb_enabled }) => {
+  _extensionEnabled = tb_enabled !== false;
+  if (_extensionEnabled && isContextAlive()) Bubble.init();
+});
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local" || !("tb_enabled" in changes)) return;
+  _extensionEnabled = changes.tb_enabled.newValue !== false;
+  if (!_extensionEnabled) {
+    SidePanel.remove();
+    Bubble.remove();
+  } else {
+    Bubble.init();
+  }
+});
+
 // ═══════════════════════════════════════════════════════
 // 전역 키보드 단축키 (bubble phase — Docs keydown과 분리)
 // ═══════════════════════════════════════════════════════
@@ -1936,11 +1999,11 @@ if (isGoogleDocsLike()) {
 window.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     if (_activeDropdown) { closeActiveDropdown(); e.stopPropagation(); return; }
-    if (SidePanel.el || MiniPopover.el || Bubble.el) {
+    if (SidePanel.el || MiniPopover.el || Bubble._text !== null) {
       e.stopPropagation();
       SidePanel.remove();
       MiniPopover.remove();
-      Bubble.remove();
+      if (Bubble._text !== null) Bubble.showDefault();
     }
     return;
   }

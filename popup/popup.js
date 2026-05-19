@@ -21,11 +21,20 @@ function renderLoggedOut() {
       <img src="../icons/icon32.png" class="tb-logo-img" alt="TextBoi">
       <span class="tb-logo">TextBoi</span>
     </div>
+    <div class="tb-activation-row">
+      <span class="tb-activation-label">Activation</span>
+      <label class="tb-toggle" title="Enable / disable extension">
+        <input type="checkbox" id="ext-toggle">
+        <span class="tb-toggle-slider"></span>
+      </label>
+    </div>
     <div class="tb-auth">
       <p class="tb-auth-desc">Sign in for unlimited usage.</p>
       <button id="login-btn" class="tb-btn tb-btn--primary">Sign in with Google</button>
     </div>
   `;
+
+  _bindToggle();
 
   document.getElementById("login-btn").addEventListener("click", async () => {
     const btn = document.getElementById("login-btn");
@@ -51,6 +60,13 @@ async function renderLoggedIn(token) {
       <span class="tb-logo">TextBoi</span>
       <button id="logout-btn" class="tb-btn tb-btn--ghost">Log out</button>
     </div>
+    <div class="tb-activation-row">
+      <span class="tb-activation-label">Activation</span>
+      <label class="tb-toggle" title="Enable / disable extension">
+        <input type="checkbox" id="ext-toggle">
+        <span class="tb-toggle-slider"></span>
+      </label>
+    </div>
     <p class="tb-email" id="tb-email"></p>
     <div class="tb-plan-section" id="plan-section">
       <div class="tb-plan-loading">Loading plan...</div>
@@ -58,6 +74,8 @@ async function renderLoggedIn(token) {
   `;
 
   document.getElementById("tb-email").textContent = email;
+
+  _bindToggle();
 
   document.getElementById("logout-btn").addEventListener("click", async () => {
     await logout();
@@ -120,7 +138,7 @@ function renderPlanSection(plan) {
 
   let actionBtn = "";
   if (isFree) {
-    actionBtn = `<button class="tb-btn tb-btn--upgrade" id="plan-action-btn">Go Basic – $5/month</button>`;
+    actionBtn = `<button class="tb-btn tb-btn--upgrade" id="plan-action-btn">Get Basic — $5 / mo</button>`;
   } else {
     actionBtn = `<button class="tb-btn tb-btn--manage" id="plan-action-btn">Manage Subscription</button>`;
   }
@@ -151,24 +169,31 @@ function renderPlanSection(plan) {
     <div class="tb-plan-cards">
       <div class="tb-plan-card${isFree ? " tb-plan-card--active" : ""}">
         <div class="tb-plan-card-header">
-          <span class="tb-plan-name">Free</span>
-          <span class="tb-plan-price">$0<span class="tb-plan-per">/mo</span></span>
+          <span class="tb-plan-name">FREE</span>
+          <span class="tb-plan-price">$0<span class="tb-plan-per"> / month</span></span>
         </div>
+        <p class="tb-plan-subtitle">Enough for daily use</p>
         <ul class="tb-plan-features">
-          <li>50,000 tokens / month</li>
+          <li>150,000 characters / month</li>
+          <li>10 free uses as guest (no signup)</li>
+          <li>150+ languages</li>
+          <li>Proofreading &amp; grammar check</li>
           <li>GPT-4o mini</li>
-          <li>Translate &amp; Correct</li>
         </ul>
       </div>
       <div class="tb-plan-card tb-plan-card--basic${!isFree ? " tb-plan-card--active" : ""}">
         <div class="tb-plan-card-header">
-          <span class="tb-plan-name">Basic</span>
-          <span class="tb-plan-price">$5<span class="tb-plan-per">/mo</span></span>
+          <span class="tb-plan-name">BASIC <span class="tb-popular-badge">Most Popular</span></span>
+          <span class="tb-plan-price">$5<span class="tb-plan-per"> / month</span></span>
         </div>
+        <p class="tb-plan-subtitle">Use it all day, every day</p>
         <ul class="tb-plan-features">
-          <li>3,000,000 tokens / month</li>
-          <li>All models including GPT-4.1</li>
-          <li>Diff &amp; Explain</li>
+          <li>9,000,000 characters / month — no daily limits</li>
+          <li>150+ languages</li>
+          <li>Proofreading &amp; grammar check</li>
+          <li>Dictionary lookup</li>
+          <li>Revision insights</li>
+          <li>All models: 4o-mini, 4o, 4.1, 4.1-mini, 5</li>
         </ul>
         <div class="tb-plan-card-action">
           ${actionBtn}
@@ -176,6 +201,7 @@ function renderPlanSection(plan) {
         </div>
       </div>
     </div>
+    <a href="https://textboi.ai" target="_blank" class="tb-visit-link">Want more power? Visit textboi.ai →</a>
   `;
 
   document.getElementById("plan-action-btn")?.addEventListener("click", () => {
@@ -203,12 +229,12 @@ async function startCheckout(plan) {
       showPopupToast(res.message || "Plan change scheduled.");
     } else if (!res?.ok) {
       showPopupToast("Failed: " + (res?.error || "Unknown error"));
-      if (btn) { btn.disabled = false; btn.textContent = "Go Basic – $5/month"; }
+      if (btn) { btn.disabled = false; btn.textContent = "Get Basic — $5 / mo"; }
     }
     // url이 있으면 background.js가 이미 탭을 열었음
   } catch {
     showPopupToast("Checkout failed. Please try again.");
-    if (btn) { btn.disabled = false; btn.textContent = "Go Basic – $5/month"; }
+    if (btn) { btn.disabled = false; btn.textContent = "Get Basic — $5 / mo"; }
   }
 }
 
@@ -225,6 +251,20 @@ async function openPortal() {
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = "Manage Subscription"; }
   }
+}
+
+function _bindToggle() {
+  const checkbox = document.getElementById("ext-toggle");
+  if (!checkbox) return;
+
+  // 저장된 상태 로드 (기본값: true)
+  chrome.storage.local.get("tb_enabled", ({ tb_enabled }) => {
+    checkbox.checked = tb_enabled !== false;
+  });
+
+  checkbox.addEventListener("change", () => {
+    chrome.storage.local.set({ tb_enabled: checkbox.checked });
+  });
 }
 
 function showPopupToast(message) {
