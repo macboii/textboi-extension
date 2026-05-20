@@ -466,6 +466,28 @@ body {
 }
 .tb-visit-link:hover { color: #1d4ed8; opacity: 0.85; }
 
+/* ── Legal links ── */
+.tb-legal-links {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 4px 0 10px;
+}
+
+.tb-legal-link {
+  font-size: 10px;
+  color: #9ca3af;
+  text-decoration: none;
+  transition: color 0.15s;
+}
+.tb-legal-link:hover { color: #6b7280; }
+
+.tb-legal-sep {
+  font-size: 10px;
+  color: #d1d5db;
+}
+
 /* ── Dark mode ── */
 @media (prefers-color-scheme: dark) {
   body { background: #1f2937; color: #f9fafb; }
@@ -541,4 +563,7 @@ body {
   .tb-plan-subtitle { color: #6b7280; }
   .tb-visit-link { color: #60a5fa; }
   .tb-visit-link:hover { color: #93c5fd; opacity: 0.85; }
+  .tb-legal-link { color: #6b7280; }
+  .tb-legal-link:hover { color: #9ca3af; }
+  .tb-legal-sep { color: #4b5563; }
 }

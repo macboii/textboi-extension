@@ -207,6 +207,11 @@ function renderPlanSection(plan) {
       </div>
     </div>
     <a href="https://textboi.ai" target="_blank" class="tb-visit-link">Want more power? Visit textboi.ai →</a>
+    <div class="tb-legal-links">
+      <a href="https://textboi.ai/terms" target="_blank" class="tb-legal-link">Terms of Service</a>
+      <span class="tb-legal-sep">·</span>
+      <a href="https://textboi.ai/privacy" target="_blank" class="tb-legal-link">Privacy Policy</a>
+    </div>
   `;
 
   document.getElementById("plan-action-btn")?.addEventListener("click", () => {
