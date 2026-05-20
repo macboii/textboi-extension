@@ -147,8 +147,13 @@ function renderPlanSection(plan) {
     ? `<p class="tb-cancel-notice">Subscription ends on ${renewalDate}</p>`
     : "";
 
-  const renewalLine = daysUntilRenewal !== null && !isFree
-    ? `<p class="tb-renewal-dday">Renews in ${daysUntilRenewal} day${daysUntilRenewal !== 1 ? "s" : ""}</p>`
+  const renewalLine = daysUntilRenewal !== null
+    ? `<p class="tb-renewal-dday">
+        <span class="tb-renewal-label">${isFree ? "Resets" : "Renews"}</span>
+        <span class="tb-renewal-date">${renewalDate}</span>
+        <span class="tb-renewal-sep">·</span>
+        <span class="tb-renewal-days">${daysUntilRenewal} day${daysUntilRenewal !== 1 ? "s" : ""} left</span>
+       </p>`
     : "";
 
   planSection.innerHTML = `

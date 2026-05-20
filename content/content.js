@@ -231,7 +231,7 @@ function addKeyboardNav(searchInput, list) {
       else searchInput.focus();
     } else if (e.key === "Enter") {
       e.preventDefault();
-      all[idx].dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      all[idx].click();
     }
   });
 }
@@ -266,8 +266,8 @@ function buildLangDropdown(langs, currentCode, onSelect) {
       item.className = "tb-dd-item" + (lang.code === currentCode ? " tb-dd-item--selected" : "");
       item.tabIndex = -1;
       item.textContent = lang.label;
-      item.addEventListener("mousedown", (e) => {
-        e.preventDefault();
+      item.addEventListener("mousedown", (e) => e.preventDefault());
+      item.addEventListener("click", () => {
         onSelect(lang.code, lang.label);
         closeActiveDropdown();
       });
@@ -318,8 +318,8 @@ function buildRewriteDropdown(types, currentPrompt, customPrompts, onSelect) {
         labelEl.className = "tb-dd-item-label";
         labelEl.textContent = "✏️ " + _truncateLabel(p, 36);
         item.appendChild(labelEl);
-        item.addEventListener("mousedown", (e) => {
-          e.preventDefault();
+        item.addEventListener("mousedown", (e) => e.preventDefault());
+        item.addEventListener("click", () => {
           onSelect(null, p, p);
           closeActiveDropdown();
         });
@@ -361,8 +361,8 @@ function buildRewriteDropdown(types, currentPrompt, customPrompts, onSelect) {
         descEl.textContent = type.description;
         item.appendChild(descEl);
       }
-      item.addEventListener("mousedown", (e) => {
-        e.preventDefault();
+      item.addEventListener("mousedown", (e) => e.preventDefault());
+      item.addEventListener("click", () => {
         onSelect(type.id, type.label, type.prompt);
         closeActiveDropdown();
       });
@@ -733,11 +733,22 @@ const SidePanel = {
 
       const settings = await getSettings();
       // 플랜/로그인 상태 확인 (모델 셀렉터 잠금 여부 결정)
-      const [token, currentPlan] = await Promise.all([
+      const [token, cachedPlan] = await Promise.all([
         new Promise((r) => chrome.storage.local.get("tb_access_token", ({ tb_access_token }) => r(tb_access_token || null))),
         new Promise((r) => chrome.storage.local.get("tb_current_plan", ({ tb_current_plan }) => r(tb_current_plan || null))),
       ]);
-      const isGuestOrFree = !token || !currentPlan || currentPlan.plan_type === "free";
+      // 로그인 상태인데 캐시가 없으면 백그라운드에서 최신 플랜 조회
+      let currentPlan = cachedPlan;
+      if (token && !currentPlan) {
+        try {
+          const resp = await new Promise((resolve) =>
+            chrome.runtime.sendMessage({ type: "GET_PLAN" }, resolve)
+          );
+          currentPlan = resp?.plan || null;
+        } catch {}
+      }
+      // plan이 null이어도 로그인 상태면 잠금하지 않음 (서버사이드에서 이중 방어)
+      const isGuestOrFree = !token || currentPlan?.plan_type === "free";
       if (isGuestOrFree) settings.model = "gpt-4o-mini";
       this._populateSelects(settings, isGuestOrFree);
       this._bindEvents(settings, isGuestOrFree);
@@ -1138,6 +1149,7 @@ const SidePanel = {
         this._currentMode = settings.mode;
         this._switchMode(settings.mode);
         await saveSettings({ mode: settings.mode });
+        this.el.querySelector(".tb-original")?.focus();
       });
     });
 
@@ -1184,6 +1196,7 @@ const SidePanel = {
       settings.model = e.target.value;
       this._updateModelDot(e.target.value);
       await saveSettings({ model: e.target.value });
+      this.el.querySelector(".tb-original")?.focus();
     });
 
     this.el.querySelector(".tb-replace-btn").addEventListener("click", () => {

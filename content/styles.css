@@ -618,6 +618,7 @@
 .tb-dd-list {
   overflow-y: auto !important;
   flex: 1 !important;
+  min-height: 0 !important;
   padding: 4px !important;
 }
 

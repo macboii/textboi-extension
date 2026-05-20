@@ -11,7 +11,8 @@
     "identity",
     "contextMenus",
     "clipboardWrite",
-    "clipboardRead"
+    "clipboardRead",
+    "notifications"
   ],
 
   "host_permissions": [
@@ -73,6 +74,10 @@
     {
       "resources": ["icons/*.png"],
       "matches": ["<all_urls>"]
+    },
+    {
+      "resources": ["billing-success.html", "billing-success.js"],
+      "matches": ["https://textboi.ai/*"]
     }
   ]
 }

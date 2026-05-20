@@ -442,22 +442,64 @@ document.addEventListener("selectionchange", () => {
 
 ## Bubble 컴포넌트
 
-mouseup / selectionchange(키보드) 후 선택 텍스트가 있으면 표시되는 원형 아이콘 버튼.
+**상시 표시 버블** — 페이지 로드 시 우측 하단에 항상 표시되며, 텍스트 선택 시 선택 영역 근처로 이동한다.
+
+### 상태 모델
+
+| 상태 | 위치 | `Bubble._text` |
+|------|------|---------------|
+| 기본(default) | 우측 하단 고정 (margin 20px) | `null` |
+| 선택(selection) | 선택 영역 우측 끝 근처 | 선택된 텍스트 |
+| 제거(removed) | DOM에 없음 (패널 열림 중) | `null` |
+
+### 주요 메서드
 
 ```javascript
-// 위치: 선택 영역 우측 끝에 수직 중앙으로 붙임 (getSelectionEndRect 사용)
-const size = 36;
-const top = rect.bottom - size / 2;
-const left = Math.min(rect.right + 4, window.innerWidth - size - 8);
-
-// 아이콘: chrome.runtime.getURL('icons/icon48.png') — manifest.json에 web_accessible_resources 필수
-// 클릭 동작:
-//   - SidePanel이 이미 열려있으면 .tb-original textarea만 업데이트 (SidePanel._updateSourceLang 포함)
-//   - 패널이 없으면 SidePanel.show(text) 호출
+Bubble.init()        // 페이지 로드 시 우측 하단에 버블 생성 — 이미 있으면 no-op
+Bubble.showDefault() // 우측 하단으로 이동 + _text 초기화 — !_extensionEnabled 이면 skip
+Bubble.show(rect, text, onClickFn?)  // 선택 영역 근처로 이동 + _text 저장 — !_extensionEnabled 이면 skip
+Bubble.remove()      // DOM에서 완전 제거 (패널 열릴 때 / 익스텐션 비활성화 시만 사용)
 ```
 
-**주의**: `document.addEventListener('mousedown', () => Bubble.remove())` 로 외부 클릭 시 제거되므로,
-버블 자체 mousedown에서 반드시 `e.stopPropagation()` 호출해야 버블 클릭이 작동한다.
+### 초기화 흐름
+
+```javascript
+// chrome.storage.local.get 콜백 안에서만 init() 호출 — _extensionEnabled 확인 후
+chrome.storage.local.get("tb_enabled", ({ tb_enabled }) => {
+  _extensionEnabled = tb_enabled !== false;
+  if (_extensionEnabled && isContextAlive()) Bubble.init();
+});
+
+// 토글 on → Bubble.init() / off → Bubble.remove()
+chrome.storage.onChanged.addListener((changes, area) => {
+  _extensionEnabled = changes.tb_enabled.newValue !== false;
+  if (!_extensionEnabled) { SidePanel.remove(); Bubble.remove(); }
+  else { Bubble.init(); }
+});
+```
+
+### 클릭 동작
+
+- `_onClickFn` 이 있으면 호출 (Docs 커스텀 핸들러)
+- 없으면: SidePanel 열림 → textarea 업데이트 / 없으면 `SidePanel.show(text)`
+
+### CSS transition
+
+```css
+#textboi-bubble {
+  transition: transform 0.12s ease, box-shadow 0.12s ease,
+              top 0.22s cubic-bezier(0.4,0,0.2,1),
+              left 0.22s cubic-bezier(0.4,0,0.2,1) !important;
+}
+```
+
+### Docs `_showSelectionBubble`
+
+Docs는 별도 DOM 생성 없이 `Bubble.show(rect, text, asyncClickFn)` 재사용.  
+`asyncClickFn` 에서 `DocsModule._skipNextMouseup = true` 설정 후 `_execCopyAndCapture()` 재시도.
+
+**주의**: `Bubble.showDefault()` / `Bubble.show()` 는 `_extensionEnabled` 가드가 내장되어 있으므로  
+외부에서 별도 체크 불필요. `Bubble.remove()` 는 가드 없음 — 패널 열기 / 비활성화 시에만 호출.
 
 ## 사이트 감지 유틸
 

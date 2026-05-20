@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Payment Successful — TextBoi</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #f9fafb;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      color: #111827;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+      padding: 48px 40px;
+      text-align: center;
+      max-width: 420px;
+      width: 90%;
+    }
+
+    .icon {
+      font-size: 56px;
+      margin-bottom: 20px;
+      display: block;
+    }
+
+    h1 {
+      font-size: 22px;
+      font-weight: 700;
+      color: #111827;
+      margin-bottom: 10px;
+    }
+
+    p {
+      font-size: 14px;
+      color: #6b7280;
+      line-height: 1.6;
+      margin-bottom: 28px;
+    }
+
+    .badge {
+      display: inline-block;
+      background: #fef3c7;
+      color: #92400e;
+      border: 1px solid #fcd34d;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 700;
+      padding: 4px 14px;
+      margin-bottom: 28px;
+    }
+
+    .close-btn {
+      display: inline-block;
+      background: #111827;
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      padding: 12px 28px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .close-btn:hover { background: #374151; }
+
+    .hint {
+      margin-top: 16px;
+      font-size: 12px;
+      color: #9ca3af;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      body { background: #111827; color: #f9fafb; }
+      .card { background: #1f2937; box-shadow: 0 4px 24px rgba(0,0,0,0.4); }
+      h1 { color: #f9fafb; }
+      p { color: #9ca3af; }
+      .close-btn { background: #f9fafb; color: #111827; }
+      .close-btn:hover { background: #e5e7eb; }
+      .hint { color: #6b7280; }
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <span class="icon">🎉</span>
+    <h1>Payment Successful!</h1>
+    <div class="badge" id="plan-badge">Basic Plan</div>
+    <p>Your plan is now active.<br>You can close this tab and continue using TextBoi.</p>
+    <button class="close-btn" onclick="window.close()">Close Tab</button>
+    <p class="hint">The TextBoi extension has been updated automatically.</p>
+  </div>
+  <script src="billing-success.js"></script>
+</body>
+</html>

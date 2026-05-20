@@ -219,8 +219,26 @@ body {
 .tb-quota-refresh-btn:hover { color: #374151; }
 
 .tb-renewal-dday {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   font-size: 11px;
   color: #9ca3af;
+  margin-top: 4px;
+}
+.tb-renewal-label {
+  color: #6b7280;
+}
+.tb-renewal-date {
+  color: #d1d5db;
+  font-weight: 500;
+}
+.tb-renewal-sep {
+  color: #4b5563;
+}
+.tb-renewal-days {
+  color: #60a5fa;
+  font-weight: 500;
 }
 
 /* ── Plan cards ── */
@@ -488,6 +506,8 @@ body {
   .tb-quota-refresh-btn { color: #6b7280; }
   .tb-quota-refresh-btn:hover { color: #d1d5db; }
   .tb-renewal-dday { color: #6b7280; }
+  .tb-renewal-date { color: #9ca3af; }
+  .tb-renewal-days { color: #60a5fa; }
   .tb-cancel-notice { color: #f87171; }
 
   .tb-btn--upgrade { background: #3b82f6; }

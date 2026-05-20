@@ -796,7 +796,13 @@ async function handleStripeCheckout(plan) {
     const res = await fetch(`${STRIPE_WORKER_URL}/api/stripe/checkout`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ plan, user_id: userId, email, name }),
+      body: JSON.stringify({
+        plan,
+        user_id: userId,
+        email,
+        name,
+        success_url: "https://textboi.ai/billing-success-ext?session_id={CHECKOUT_SESSION_ID}",
+      }),
     });
     if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
     const data = await res.json();
@@ -827,7 +833,7 @@ async function handleStripePortal() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         stripe_customer_id: customerId,
-        return_url: "https://textboi.ai/billing-success",
+        return_url: "https://textboi.ai/billing-success-ext",
       }),
     });
     if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
@@ -845,26 +851,34 @@ async function handleStripePortal() {
 /* =========================
    결제 완료 감지 (tabs.onUpdated)
 ========================= */
+const _billingTabsSeen = new Set();
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-  if (changeInfo.status !== "complete") return;
-  const url = tab.url || "";
-  if (!url.startsWith("https://textboi.ai/billing-success")) return;
-
-  // 결제 완료 탭 즉시 닫기 (billing-success 페이지 오류 노출 방지)
-  chrome.tabs.remove(tabId).catch(() => {});
+  // changeInfo.url: 리다이렉트 전 URL 변경 시 / tab.url: status=complete 시
+  const url = changeInfo.url || (changeInfo.status === "complete" ? tab.url : "") || "";
+  if (!url.startsWith("https://textboi.ai/billing-success-ext") &&
+      !url.startsWith("https://textboi.ai/billing-success")) return;
+  if (_billingTabsSeen.has(tabId)) return;
+  _billingTabsSeen.add(tabId);
+  setTimeout(() => _billingTabsSeen.delete(tabId), 30000);
 
   const sessionId = new URL(url).searchParams.get("session_id");
   if (sessionId) {
     try {
       await fetch(`${STRIPE_WORKER_URL}/api/stripe/success-verify?session_id=${sessionId}`);
-    } catch {
-      // Webhook이 보완 — 조용히 무시
-    }
+    } catch {}
   }
 
-  // 최신 플랜 조회 → 캐시 저장 → 팝업에 알림
-  const plan = await fetchCurrentPlan();
+  // 최대 5회 polling — webhook 처리 대기 (1.5s 간격)
+  let plan = null;
+  for (let i = 0; i < 5; i++) {
+    await new Promise(r => setTimeout(r, 1500));
+    plan = await fetchCurrentPlan();
+    if (plan?.plan_type && plan.plan_type.toLowerCase() !== "free") break;
+  }
+
   if (plan) chrome.storage.local.set({ tb_current_plan: plan });
+
+  // 팝업이 열려있으면 UI 갱신
   chrome.runtime.sendMessage({ type: "PLAN_REFRESHED", plan }).catch(() => {});
 });
 
