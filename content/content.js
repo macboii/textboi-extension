@@ -895,8 +895,15 @@ const SidePanel = {
   showGuestBanner(remaining) {
     const banner = this.el?.querySelector(".tb-guest-banner");
     if (!banner) return;
-    banner.textContent = `${remaining} free use${remaining === 1 ? "" : "s"} remaining · Sign in for unlimited`;
+    banner.innerHTML = `
+      <span class="tb-guest-banner-text">${remaining} free use${remaining === 1 ? "" : "s"} remaining · Sign in for more usage</span>
+      <button class="tb-guest-signin-btn">Sign in</button>
+    `;
     banner.style.display = "";
+    banner.querySelector(".tb-guest-signin-btn")?.addEventListener("click", () => {
+      chrome.runtime.sendMessage({ type: "OPEN_POPUP" }).catch(() => {});
+      chrome.runtime.sendMessage({ type: "TRIGGER_LOGIN" }).catch(() => {});
+    });
   },
 
   startSpinner() {
@@ -1878,8 +1885,9 @@ const DocsModule = {
           return;
         }
 
-        // Cmd/Ctrl+Enter: Replace
+        // Cmd/Ctrl+Enter: Replace (게스트/Quota 한도 초과 시 차단)
         if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+          if (SidePanel._quotaExceeded) return;
           if (SidePanel.state === "done") {
             e.preventDefault();
             e.stopImmediatePropagation();
@@ -2024,6 +2032,9 @@ window.addEventListener("keydown", (e) => {
   // Cmd/Ctrl+Enter: Replace 실행
   // stopImmediatePropagation으로 Slides 프레젠테이션 모드 진입 차단
   if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+    // 게스트/Quota 한도 초과 시 — 모든 실행 차단 (기본 동작도 허용)
+    if (SidePanel._quotaExceeded) return;
+
     if (SidePanel.state === "done") {
       e.preventDefault();
       e.stopImmediatePropagation();

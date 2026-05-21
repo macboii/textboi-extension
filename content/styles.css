@@ -211,8 +211,33 @@
   border-bottom: 1px solid #4A4200 !important;
   font-size: 11px !important;
   color: #FFD60A !important;
-  text-align: center !important;
   flex-shrink: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 8px !important;
+}
+
+#textboi-panel .tb-guest-banner-text {
+  flex: 1 !important;
+  min-width: 0 !important;
+}
+
+#textboi-panel .tb-guest-signin-btn {
+  flex-shrink: 0 !important;
+  background: #FFD60A !important;
+  color: #1C1A00 !important;
+  border: none !important;
+  border-radius: 6px !important;
+  padding: 3px 10px !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  cursor: pointer !important;
+  line-height: 1.4 !important;
+}
+
+#textboi-panel .tb-guest-signin-btn:hover {
+  background: #FFE84D !important;
 }
 
 /* ═══════════════════════════════════════════════════

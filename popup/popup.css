@@ -117,6 +117,50 @@ body {
   line-height: 1.5;
 }
 
+.tb-auth-hint {
+  font-size: 11px;
+  color: #9ca3af;
+  text-align: center;
+  margin-top: 2px;
+}
+
+/* ── Guest quota ── */
+.tb-guest-quota-wrap {
+  padding: 10px 14px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.tb-guest-quota-bar-bg {
+  width: 100%;
+  height: 6px;
+  background: #e5e7eb;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.tb-guest-quota-bar-fill {
+  height: 100%;
+  background: #2563eb;
+  border-radius: 3px;
+  transition: width 0.3s ease, background 0.3s ease;
+}
+
+.tb-guest-quota-bar-fill--low {
+  background: #ef4444;
+}
+
+.tb-guest-quota-text {
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.tb-guest-quota-text--empty {
+  color: #ef4444;
+  font-weight: 500;
+}
+
 /* ── Plan section ── */
 .tb-plan-section {
   padding: 10px 14px 14px;
@@ -566,4 +610,10 @@ body {
   .tb-legal-link { color: #6b7280; }
   .tb-legal-link:hover { color: #9ca3af; }
   .tb-legal-sep { color: #4b5563; }
+  .tb-guest-quota-bar-bg { background: #374151; }
+  .tb-guest-quota-bar-fill { background: #3b82f6; }
+  .tb-guest-quota-bar-fill--low { background: #dc2626; }
+  .tb-guest-quota-text { color: #9ca3af; }
+  .tb-guest-quota-text--empty { color: #f87171; }
+  .tb-auth-hint { color: #6b7280; }
 }

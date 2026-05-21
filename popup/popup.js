@@ -14,7 +14,7 @@ function decodeEmail(token) {
   }
 }
 
-function renderLoggedOut() {
+async function renderLoggedOut() {
   const app = document.getElementById("app");
   app.innerHTML = `
     <div class="tb-header">
@@ -28,9 +28,15 @@ function renderLoggedOut() {
         <span class="tb-toggle-slider"></span>
       </label>
     </div>
+    <div class="tb-guest-quota-wrap" id="guest-quota-wrap">
+      <div class="tb-guest-quota-bar-bg">
+        <div class="tb-guest-quota-bar-fill" id="guest-quota-fill" style="width:100%"></div>
+      </div>
+      <p class="tb-guest-quota-text" id="guest-quota-text">Loading free uses…</p>
+    </div>
     <div class="tb-auth">
-      <p class="tb-auth-desc">Sign in for unlimited usage.</p>
       <button id="login-btn" class="tb-btn tb-btn--primary">Sign in with Google</button>
+      <p class="tb-auth-hint">Sign in for more usage &amp; all models</p>
     </div>
   `;
 
@@ -48,6 +54,35 @@ function renderLoggedOut() {
       btn.textContent = "Sign in with Google";
     }
   });
+
+  // 게스트 잔여 횟수 로드 — GET_GUEST_QUOTA는 /device/free-status (읽기 전용) 사용
+  try {
+    const res = await chrome.runtime.sendMessage({ type: "GET_GUEST_QUOTA" });
+    const quota = res?.quota;
+    const GUEST_MAX = 10;
+    const remaining = typeof quota?.remaining === "number" ? quota.remaining : GUEST_MAX;
+    const limitExceeded = quota?.limitExceeded === true || remaining <= 0;
+    const pct = Math.max(0, (remaining / GUEST_MAX) * 100);
+
+    const fillEl = document.getElementById("guest-quota-fill");
+    const textEl = document.getElementById("guest-quota-text");
+    if (fillEl) {
+      fillEl.style.width = `${pct}%`;
+      if (limitExceeded) fillEl.classList.add("tb-guest-quota-bar-fill--low");
+      else if (remaining <= 2) fillEl.classList.add("tb-guest-quota-bar-fill--low");
+    }
+    if (textEl) {
+      if (limitExceeded) {
+        textEl.textContent = "No free uses left — sign in to continue";
+        textEl.classList.add("tb-guest-quota-text--empty");
+      } else {
+        textEl.textContent = `${remaining} of ${GUEST_MAX} free uses remaining`;
+      }
+    }
+  } catch {
+    const textEl = document.getElementById("guest-quota-text");
+    if (textEl) textEl.textContent = "10 free uses available";
+  }
 }
 
 async function renderLoggedIn(token) {

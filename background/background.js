@@ -93,6 +93,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       });
     return true;
   }
+
+  if (msg.type === "TRIGGER_LOGIN") {
+    chrome.action.openPopup().catch(() => {});
+    return;
+  }
+
+  if (msg.type === "GET_GUEST_QUOTA") {
+    // /device/free-status (GET, 읽기 전용) 사용 — check-free는 카운트를 올리므로 절대 사용 금지
+    getDeviceId()
+      .then((deviceId) => fetchGuestStatus(deviceId))
+      .then((quota) => sendResponse({ quota }))
+      .catch(() => sendResponse({ quota: { ok: true, remaining: 10 } }));
+    return true;
+  }
 });
 
 
@@ -291,8 +305,14 @@ async function handleProcessText(msg, tabId, signal) {
     return;
   }
 
-  if (isGuest && guestRemaining !== null) {
-    chrome.tabs.sendMessage(tabId, { type: "GUEST_REMAINING", remaining: guestRemaining });
+  if (isGuest) {
+    // check-free 반환값(guestRemaining)은 증가 직후 값이라 부정확할 수 있음
+    // 스트리밍 완료 후 free-status(읽기 전용)로 실제 잔여 횟수 조회
+    const status = await fetchGuestStatus(deviceId).catch(() => null);
+    const remaining = status?.remaining ?? guestRemaining;
+    if (remaining !== null) {
+      chrome.tabs.sendMessage(tabId, { type: "GUEST_REMAINING", remaining });
+    }
   }
 
   const cleanResult = applyTextCleanup(fullResult);
@@ -459,6 +479,7 @@ async function saveDiff({ diffHtml, systemPrompt, content, locale, model, rewrit
 /* =========================
    게스트 한도 확인
 ========================= */
+// 실제 API 호출 전 — 카운트를 +1 증가시키고 한도 초과 여부 반환
 async function checkGuestQuota(deviceId) {
   try {
     const res = await fetch(`${SUPABASE_REST_API_URL}/device/check-free`, {
@@ -468,6 +489,19 @@ async function checkGuestQuota(deviceId) {
     return await res.json();
   } catch {
     return { ok: true };
+  }
+}
+
+// 팝업/UI 표시용 — 읽기 전용, 카운트 변경 없음
+async function fetchGuestStatus(deviceId) {
+  try {
+    const res = await fetch(`${SUPABASE_REST_API_URL}/device/free-status`, {
+      method: "GET",
+      headers: { "x-device-id": deviceId },
+    });
+    return await res.json(); // { ok, remaining, limitExceeded }
+  } catch {
+    return { ok: true, remaining: 10, limitExceeded: false };
   }
 }
 
@@ -529,18 +563,19 @@ async function handlePostLogin() {
   const provider = payload.app_metadata?.provider || "google";
   const deviceId = await getDeviceId();
 
-  // 1. public.users upsert
-  const chromeVersionMatch = navigator.userAgent.match(/Chrome\/([\d.]+)/);
-  const browserVersion = chromeVersionMatch ? chromeVersionMatch[1] : null;
-
+  // 1. public.users 등록/갱신
+  // - INSERT: ignore-duplicates → 신규 유저만 생성, 기존 유저 트리거(민감 컬럼 차단) 회피
+  // - PATCH: 민감 컬럼 제외한 안전한 필드만 업데이트 (재로그인 시 last_login_at 갱신)
+  const now = new Date().toISOString();
+  const appVersion = chrome.runtime.getManifest().version;
   try {
-    await fetch(`${SUPABASE_URL}/rest/v1/users`, {
+    const insertRes = await fetch(`${SUPABASE_URL}/rest/v1/users`, {
       method: "POST",
       headers: {
         apikey: SUPABASE_ANON_KEY,
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
-        Prefer: "resolution=merge-duplicates,return=minimal",
+        Prefer: "resolution=ignore-duplicates,return=minimal",
       },
       body: JSON.stringify({
         id: userId,
@@ -549,12 +584,45 @@ async function handlePostLogin() {
         avatar_url: avatarUrl,
         provider,
         platform: "chrome-extension",
-        app_version: chrome.runtime.getManifest().version,
-        browser_version: browserVersion,
+        app_version: appVersion,
         locale: navigator.language,
-        last_login_at: new Date().toISOString(),
+        token_quota: 50000,
+        token_input: 0,
+        token_output: 0,
+        created_at: now,
+        last_login_at: now,
       }),
     });
+    if (!insertRes.ok) {
+      const errText = await insertRes.text();
+      console.error("[TextBoi] users insert failed:", insertRes.status, errText);
+    }
+  } catch (e) {
+    console.error("[TextBoi] users insert error:", e);
+  }
+
+  // 기존 유저: 민감 컬럼 제외 안전 필드만 PATCH (UPDATE 트리거 안전)
+  try {
+    await fetch(
+      `${SUPABASE_URL}/rest/v1/users?id=eq.${encodeURIComponent(userId)}`,
+      {
+        method: "PATCH",
+        headers: {
+          apikey: SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          Prefer: "return=minimal",
+        },
+        body: JSON.stringify({
+          name,
+          avatar_url: avatarUrl,
+          platform: "chrome-extension",
+          app_version: appVersion,
+          locale: navigator.language,
+          last_login_at: now,
+        }),
+      }
+    );
   } catch {
     // 조용히 무시
   }
