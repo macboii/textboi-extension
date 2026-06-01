@@ -144,6 +144,7 @@ const url = 'https://azgplnfczforimmtpznx.supabase.co/...';
 - 토큰 만료: `isTokenExpired(token)` (JWT `exp` × 1000 < `Date.now() + 60_000`) 로 proactive 체크 → `getValidToken()` 호출 → `refreshAccessToken()` → 실패 시 `STREAM_ERROR`. 모든 API 호출 함수(`handleProcessText`, `handleExplainDiff`, `handlePostLogin`, `fetchCurrentPlan`, `handleStripeCheckout`, `handleStripePortal`)는 반드시 `getValidToken()` 사용. `getAccessToken()` 직접 호출 금지.
 - 장치 세션 미등록(`DEVICE_NOT_AUTHORIZED`): `ensureDeviceSessionOnce(token, deviceId)` — `chrome.storage`에 `tb_session_{deviceId}` 키로 캐시해 중복 호출 방지. 성공 시에만 캐시(`true`) 저장. `saveHistory()` / `saveDiff()` 401 시 스탈 캐시를 `chrome.storage.local.remove(key)`로 제거 후 `registerDeviceSession()` 재호출 → 성공 시 캐시 재저장 → `doSave()` 재시도. `/save-session` 호출 시 반드시 `Authorization: Bearer {token}` 헤더 포함 (Worker JWT 미들웨어 통과 필수 — device session 미들웨어만 bypass, JWT 미들웨어는 bypass 아님).
 - `onMessage` 콜백 방식 응답 (`EXPLAIN_DIFF`): 반드시 `(msg, sender, sendResponse)` 세 번째 파라미터 선언 필수. 누락 시 `sendResponse`가 `undefined` → TypeError → 메시지 포트 닫힘 → content에서 `lastError` 수신 → 에러 UI 표시
+- `chrome.tabs.sendMessage` 직접 호출 금지 → 반드시 `sendToTab(tabId, msg)` 헬퍼 사용. `chrome://`, 새 탭 등 content script가 없는 탭에서 "Receiving end does not exist" 에러를 조용히 무시함.
 
 ## 보안 규칙
 

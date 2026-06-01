@@ -4,7 +4,8 @@
   "scripts": {
     "build": "node build.js",
     "dev": "node build.js --watch",
-    "clean": "rm -rf dist/"
+    "clean": "rm -rf dist/",
+    "pack": "node pack.js"
   },
   "devDependencies": {
     "esbuild": "^0.25.0"

@@ -12,6 +12,9 @@ import { getAccessToken, getDeviceId } from "../utils/storage.js";
 import { applyTextCleanup } from "../utils/textCleanup.js";
 import { countTokens, getModelMultiplier } from "../utils/tokenCount.js";
 
+// content script가 없는 탭(chrome://, 새 탭 등)에 보낼 때 "Receiving end does not exist" 무시
+const sendToTab = (tabId, msg) => chrome.tabs.sendMessage(tabId, msg).catch(() => {});
+
 // tabId → AbortController
 const abortControllers = new Map();
 
@@ -80,17 +83,28 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === "GET_PLAN") {
-    fetchCurrentPlan()
-      .then((plan) => {
+    (async () => {
+      try {
+        let plan = await fetchCurrentPlan();
+        // 플랜이 없거나 만료된 경우 새 달 플랜 자동 생성
+        const isExpired = plan?.billing_period_end && new Date(plan.billing_period_end) <= new Date();
+        if (!plan || isExpired) {
+          const token = await getValidToken();
+          const deviceId = await getDeviceId();
+          if (token && deviceId) {
+            await ensureFreePlanIfNeeded(token, deviceId);
+            plan = await fetchCurrentPlan();
+          }
+        }
         if (plan) chrome.storage.local.set({ tb_current_plan: plan });
         sendResponse({ plan });
-      })
-      .catch(() => {
+      } catch {
         // 네트워크/인증 실패 시 캐시된 플랜 반환
         chrome.storage.local.get("tb_current_plan", ({ tb_current_plan }) => {
           sendResponse({ plan: tb_current_plan || null });
         });
-      });
+      }
+    })();
     return true;
   }
 
@@ -117,7 +131,7 @@ chrome.commands.onCommand.addListener(async (command) => {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) return;
-    chrome.tabs.sendMessage(tab.id, { type: "COMMAND", mode: command });
+    sendToTab(tab.id, { type: "COMMAND", mode: command });
   } catch (err) {
     console.error("[TextBoi] Command failed", err);
   }
@@ -126,18 +140,21 @@ chrome.commands.onCommand.addListener(async (command) => {
 /* =========================
    우클릭 메뉴
 ========================= */
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus.create({
-    id: "textboi-translate",
-    title: "Translate with TextBoi",
-    contexts: ["selection"],
+function _createContextMenu() {
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create(
+      { id: "textboi-translate", title: "Translate with TextBoi", contexts: ["selection"] },
+      () => void chrome.runtime.lastError
+    );
   });
-});
+}
+chrome.runtime.onInstalled.addListener(_createContextMenu);
+chrome.runtime.onStartup.addListener(_createContextMenu);
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId !== "textboi-translate") return;
   if (!tab?.id || !info.selectionText) return;
-  chrome.tabs.sendMessage(tab.id, {
+  sendToTab(tab.id, {
     type: "PROCESS_TEXT",
     mode: "translate",
     text: info.selectionText,

@@ -1,14 +1,13 @@
 {
   "manifest_version": 3,
   "name": "TextBoi",
-  "version": "0.1.0",
+  "version": "0.1.1",
 
   "permissions": [
     "activeTab",
     "tabs",
     "storage",
-    "scripting",
-    "identity",
+"identity",
     "contextMenus",
     "clipboardWrite",
     "clipboardRead",
