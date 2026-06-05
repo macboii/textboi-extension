@@ -1,7 +1,7 @@
 node_modules/
 dist/
 .DS_Store
-textboi-extension.zip
+textboi-*.zip
 
 # 참조용 데스크탑 앱 — 커밋 제외
 textBoi_desktop/
