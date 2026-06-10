@@ -281,7 +281,7 @@ function buildLangDropdown(langs, currentCode, onSelect) {
   return panel;
 }
 
-function buildRewriteDropdown(types, currentPrompt, customPrompts, onSelect) {
+function buildRewriteDropdown(types, currentPrompt, customPrompts, onSelect, onDelete) {
   const panel = document.createElement("div");
   panel.innerHTML = `
     <div class="tb-dd-search-wrap">
@@ -311,13 +311,23 @@ function buildRewriteDropdown(types, currentPrompt, customPrompts, onSelect) {
 
       matchedCustom.forEach(p => {
         const item = document.createElement("div");
-        item.className = "tb-dd-item" + (p === currentPrompt ? " tb-dd-item--selected" : "");
+        item.className = "tb-dd-item tb-dd-item--custom" + (p === currentPrompt ? " tb-dd-item--selected" : "");
         item.tabIndex = -1;
         item.title = p;
         const labelEl = document.createElement("div");
         labelEl.className = "tb-dd-item-label";
         labelEl.textContent = "✏️ " + _truncateLabel(p, 36);
         item.appendChild(labelEl);
+        const deleteBtn = document.createElement("button");
+        deleteBtn.className = "tb-dd-item-delete";
+        deleteBtn.textContent = "✕";
+        deleteBtn.title = "Remove";
+        deleteBtn.addEventListener("mousedown", (e) => e.preventDefault());
+        deleteBtn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          await onDelete(p);
+        });
+        item.appendChild(deleteBtn);
         item.addEventListener("mousedown", (e) => e.preventDefault());
         item.addEventListener("click", () => {
           onSelect(null, p, p);
@@ -644,6 +654,17 @@ async function addCustomRewritePrompt(text) {
   const existing = await getCustomRewritePrompts();
   const filtered = existing.filter(p => p !== text);
   const updated = [text, ...filtered].slice(0, 5);
+  return new Promise((resolve) => {
+    try {
+      chrome.storage.local.set({ tb_custom_rewrites: updated }, resolve);
+    } catch { resolve(); }
+  });
+}
+
+async function removeCustomRewritePrompt(text) {
+  if (!isContextAlive()) return;
+  const existing = await getCustomRewritePrompts();
+  const updated = existing.filter(p => p !== text);
   return new Promise((resolve) => {
     try {
       chrome.storage.local.set({ tb_custom_rewrites: updated }, resolve);
@@ -1188,13 +1209,31 @@ const SidePanel = {
       e.stopPropagation();
       const btn = e.currentTarget;
       const customPrompts = await getCustomRewritePrompts();
-      const panelEl = buildRewriteDropdown(REWRITE_TYPES, settings.rewritePrompt || "", customPrompts, async (id, label, prompt) => {
+      const onSelectRewrite = async (id, label, prompt) => {
         settings.rewritePrompt = prompt;
         this._currentRewritePrompt = prompt;
         const btnLabel = id ? label : ("✏️ " + _truncateLabel(prompt));
         btn.textContent = btnLabel + " ▾";
         await saveSettings({ rewritePrompt: prompt });
-      });
+      };
+      const onDeleteRewrite = async (prompt) => {
+        await removeCustomRewritePrompt(prompt);
+        // 삭제된 항목이 현재 선택된 프롬프트면 기본값으로 복원
+        if (settings.rewritePrompt === prompt) {
+          const defaultType = REWRITE_TYPES[0];
+          await onSelectRewrite(defaultType.id, defaultType.label, defaultType.prompt);
+        }
+        // 드롭다운 목록 즉시 갱신
+        const updatedCustoms = await getCustomRewritePrompts();
+        if (_activeDropdown) {
+          const dropdownEl = _activeDropdown.el;
+          const newPanel = buildRewriteDropdown(REWRITE_TYPES, settings.rewritePrompt || "", updatedCustoms, onSelectRewrite, onDeleteRewrite);
+          dropdownEl.innerHTML = "";
+          while (newPanel.firstChild) dropdownEl.appendChild(newPanel.firstChild);
+          dropdownEl.querySelector(".tb-dd-search")?.focus();
+        }
+      };
+      const panelEl = buildRewriteDropdown(REWRITE_TYPES, settings.rewritePrompt || "", customPrompts, onSelectRewrite, onDeleteRewrite);
       openDropdown(btn, panelEl, 280);
     });
 

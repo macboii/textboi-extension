@@ -673,6 +673,39 @@
   flex-direction: column !important;
   gap: 2px !important;
 }
+.tb-dd-item--custom {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 6px !important;
+}
+.tb-dd-item--custom .tb-dd-item-label {
+  flex: 1 !important;
+  min-width: 0 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+.tb-dd-item-delete {
+  flex-shrink: 0 !important;
+  background: none !important;
+  border: none !important;
+  color: #636366 !important;
+  font-size: 11px !important;
+  line-height: 1 !important;
+  padding: 2px 4px !important;
+  border-radius: 4px !important;
+  cursor: pointer !important;
+  opacity: 0 !important;
+  transition: opacity 0.1s, color 0.1s, background 0.1s !important;
+}
+.tb-dd-item--custom:hover .tb-dd-item-delete {
+  opacity: 1 !important;
+}
+.tb-dd-item-delete:hover {
+  color: #FF453A !important;
+  background: rgba(255,69,58,0.12) !important;
+}
 .tb-dd-item-label {
   font-weight: 500 !important;
   font-size: 13px !important;
