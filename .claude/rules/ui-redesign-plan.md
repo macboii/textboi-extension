@@ -199,45 +199,63 @@ _switchMode(mode) {
 
 ```javascript
 // utils/constants.js에 추가
+// 각 항목 구조: id, label(영문), labelKo(한국어), description(영문), descriptionKo(한국어), prompt
 export const REWRITE_TYPES = [
   {
     id: 'proofread',
-    label: '🔍 Proofread',
-    labelKo: '🔍 교정',
+    label: '⚙️ Proofread',
+    labelKo: '⚙️ 교정',
+    description: 'Correct grammar, spelling, and punctuation.',
+    descriptionKo: '문법, 맞춤법, 구두점을 교정합니다.',
     prompt: 'Please proofread the following text. Correct grammar, spelling, and punctuation errors.',
   },
   {
     id: 'improve',
-    label: '🛠️ Improve',
-    labelKo: '🛠️ 개선',
+    label: '🔧 Improve',
+    labelKo: '🔧 개선',
+    description: 'Make it sound more natural.',
+    descriptionKo: '문장을 더 자연스럽게 다듬습니다.',
     prompt: 'Improve the fluency and clarity of the following sentence. Make it sound more natural while preserving its meaning.',
   },
   {
     id: 'elaborate',
     label: '📚 Elaborate',
     labelKo: '📚 상세화',
+    description: 'Add relevant details or context.',
+    descriptionKo: '내용을 더 자세히 풀어서 설명합니다.',
     prompt: 'Elaborate on the following sentence by adding relevant details or context. Expand the content without deviating from the original intent.',
   },
   {
     id: 'clarify',
     label: '💡 Clarify',
     labelKo: '💡 명확화',
+    description: 'Remove ambiguity and improve clarity.',
+    descriptionKo: '의미가 더 명확하게 전달되도록 합니다.',
     prompt: 'Clarify the following sentence. Rewrite it to remove ambiguity and ensure the meaning is easy to understand.',
   },
   {
     id: 'paraphrase',
     label: '✏️ Paraphrase',
     labelKo: '✏️ 바꾸어쓰기',
+    description: 'Express the same meaning differently.',
+    descriptionKo: '같은 의미를 다른 표현으로 바꿉니다.',
     prompt: 'Paraphrase the following sentence. Express the same meaning using different wording and structure.',
   },
   {
     id: 'summarize',
     label: '📄 Summarize',
     labelKo: '📄 요약',
+    description: 'Extract and present only the main idea.',
+    descriptionKo: '핵심 내용을 간략하게 요약합니다.',
     prompt: 'Summarize the following text by extracting and presenting only its main idea in a brief form.',
   },
 ];
 ```
+
+**필드 설명**:
+- `label` / `labelKo`: 드롭다운 버튼 표시용 (rewrite-btn 레이블)
+- `description` / `descriptionKo`: 드롭다운 목록 내 한 줄 설명
+- 검색은 `label` + `description` + (`_isKo`일 때 `labelKo` + `descriptionKo`) 모두 매칭
 
 **rewritePrompt 결정 로직**: `_bindEvents`에서 `.tb-rewrite-select` change 시:
 1. 선택된 REWRITE_TYPE의 `prompt` 사용

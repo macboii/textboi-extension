@@ -121,6 +121,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .catch(() => sendResponse({ quota: { ok: true, remaining: 10 } }));
     return true;
   }
+
+  if (msg.type === "APPLY_COUPON") {
+    handleApplyCoupon(msg.code).then(sendResponse).catch(() => sendResponse({ ok: false, error: "Coupon failed" }));
+    return true;
+  }
 });
 
 
@@ -928,6 +933,42 @@ async function handleStripePortal() {
       return { ok: true, url: data.url };
     }
     return { ok: false, error: data.error || "No URL" };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/* =========================
+   쿠폰 적용
+========================= */
+async function handleApplyCoupon(code) {
+  const token = await getValidToken();
+  if (!token) return { ok: false, error: "NOT_LOGGED_IN" };
+
+  let payload;
+  try { payload = JSON.parse(atob(token.split(".")[1])); } catch { return { ok: false, error: "Invalid token" }; }
+  const userId = payload.sub;
+
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/apply_coupon`, {
+      method: "POST",
+      headers: {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ p_code: code, p_user_id: userId }),
+    });
+    const data = await res.json();
+    if (!res.ok) return { ok: false, error: data.message || `HTTP ${res.status}` };
+    // 성공 시 플랜 캐시 갱신 + QUOTA_REFRESHED 브로드캐스트
+    if (data.ok) {
+      fetchCurrentPlan().then((plan) => {
+        if (plan) chrome.storage.local.set({ tb_current_plan: plan });
+        chrome.runtime.sendMessage({ type: "QUOTA_REFRESHED", plan }).catch(() => {});
+      }).catch(() => {});
+    }
+    return data;
   } catch (e) {
     return { ok: false, error: e.message };
   }

@@ -21,6 +21,45 @@ const _isMac = (() => {
 const _modSymbol = _isMac ? "⌘" : "Ctrl"; // UI 표시용 (⌘ / Ctrl)
 const _modLabel  = _isMac ? "Cmd" : "Ctrl"; // 텍스트 메시지용
 
+// 다국어 지원 — chrome.i18n.getUILanguage()가 크롬 UI 언어를 반환 (가장 신뢰할 수 있음)
+// navigator.language / navigator.languages 도 함께 체크하여 어느 하나라도 한국어면 한국어 UI 사용
+const _isKo = (() => {
+  try {
+    const ui = chrome.i18n?.getUILanguage?.() || "";
+    if (ui.startsWith("ko")) return true;
+  } catch {}
+  if ((navigator.language || "").startsWith("ko")) return true;
+  if ((navigator.languages || []).some(l => l.startsWith("ko"))) return true;
+  return false;
+})();
+const _strings = {
+  modeTranslate:     _isKo ? "번역하기" : "Translate",
+  modeCorrect:       _isKo ? "문장교정" : "Correct",
+  placeholder:       _isKo ? "여기에 입력 후 Enter, 또는 아래 가이드를 따라 시작하세요" : "Selected text appears here...",
+  emptyDescCopy:     _isKo ? "텍스트를 선택 후 두 번 복사하세요" : "Double-copy selected text to load",
+  emptyDescApply:    _isKo ? "결과를 원본 텍스트에 적용합니다" : "Apply result to original text",
+  applyBtn:          _isKo ? "적용" : "Apply",
+  searchLang:        _isKo ? "언어 검색..." : "Search language...",
+  searchRewrite:     _isKo ? "검색 또는 사용자 프롬프트 입력 + Enter" : "Search or enter custom prompt + Enter",
+  customSection:     _isKo ? "사용자 지정" : "Custom",
+  noResults:         _isKo ? "검색 결과 없음" : "No results",
+  guestLimitReached: _isKo ? "무료 사용 횟수 초과. 로그인 후 더 사용하세요." : "Free usage limit reached. Sign in to continue.",
+  quotaExceeded:     _isKo ? "이번 달 토큰 한도에 도달했습니다." : "Monthly token limit reached.",
+  upgradeBasic:      _isKo ? "Basic으로 업그레이드 →" : "Upgrade to Basic →",
+  guestRemaining:    (n) => _isKo ? `무료 ${n}회 남음 · 더 사용하려면 로그인하세요` : `${n} free use${n === 1 ? "" : "s"} remaining · Sign in for more usage`,
+  signIn:            _isKo ? "로그인" : "Sign in",
+  errorOccurred:     _isKo ? "오류가 발생했습니다." : "An error occurred.",
+  copyFailed:        _isKo ? "복사 실패" : "Copy failed",
+  selectionLost:     _isKo ? "선택 범위가 사라졌습니다. 다시 선택해주세요." : "Selection lost. Please select text again.",
+  noEditable:        _isKo ? "편집 가능한 영역을 찾을 수 없습니다." : "Could not find editable area.",
+  replaced:          _isKo ? "✅ 적용됨" : "✅ Replaced",
+  copiedPaste:       (mod) => _isKo ? `복사됨! ${mod}+V로 붙여넣기 하세요.` : `Copied! Press ${mod}+V to paste.`,
+  analyzing:         _isKo ? "변경 사항 분석 중…" : "Analyzing changes…",
+  signInRequired:    _isKo ? "설명 기능은 로그인 후 사용할 수 있습니다." : "Sign in required to use explanations.",
+  noExplanation:     _isKo ? "이 변경에 대한 설명을 사용할 수 없습니다." : "No explanation available for this change.",
+  autoDetect:        _isKo ? "자동 감지" : "Auto-detect",
+};
+
 // ═══════════════════════════════════════════════════════
 // 사이트 감지
 // ═══════════════════════════════════════════════════════
@@ -240,7 +279,7 @@ function buildLangDropdown(langs, currentCode, onSelect) {
   const panel = document.createElement("div");
   panel.innerHTML = `
     <div class="tb-dd-search-wrap">
-      <input class="tb-dd-search" type="text" placeholder="Search language..." autocomplete="off" spellcheck="false" />
+      <input class="tb-dd-search" type="text" placeholder="${_strings.searchLang}" autocomplete="off" spellcheck="false" />
     </div>
     <div class="tb-dd-list"></div>
   `;
@@ -257,7 +296,7 @@ function buildLangDropdown(langs, currentCode, onSelect) {
     if (filtered.length === 0) {
       const empty = document.createElement("div");
       empty.className = "tb-dd-empty";
-      empty.textContent = "No results";
+      empty.textContent = _strings.noResults;
       list.appendChild(empty);
       return;
     }
@@ -285,7 +324,7 @@ function buildRewriteDropdown(types, currentPrompt, customPrompts, onSelect, onD
   const panel = document.createElement("div");
   panel.innerHTML = `
     <div class="tb-dd-search-wrap">
-      <input class="tb-dd-search" type="text" placeholder="Search or enter custom prompt + Enter" autocomplete="off" spellcheck="false" />
+      <input class="tb-dd-search" type="text" placeholder="${_strings.searchRewrite}" autocomplete="off" spellcheck="false" />
     </div>
     <div class="tb-dd-list"></div>
   `;
@@ -306,7 +345,7 @@ function buildRewriteDropdown(types, currentPrompt, customPrompts, onSelect, onD
     if (matchedCustom.length > 0) {
       const header = document.createElement("div");
       header.className = "tb-dd-section-header";
-      header.textContent = "Custom";
+      header.textContent = _strings.customSection;
       list.appendChild(header);
 
       matchedCustom.forEach(p => {
@@ -345,14 +384,16 @@ function buildRewriteDropdown(types, currentPrompt, customPrompts, onSelect, onD
     const filtered = q
       ? types.filter(t =>
           t.label.toLowerCase().includes(q) ||
-          (t.description || "").toLowerCase().includes(q)
+          (t.description || "").toLowerCase().includes(q) ||
+          (_isKo && (t.labelKo || "").toLowerCase().includes(q)) ||
+          (_isKo && (t.descriptionKo || "").toLowerCase().includes(q))
         )
       : types;
 
     if (filtered.length === 0 && matchedCustom.length === 0) {
       const empty = document.createElement("div");
       empty.className = "tb-dd-empty";
-      empty.textContent = "No results";
+      empty.textContent = _strings.noResults;
       list.appendChild(empty);
       return;
     }
@@ -363,17 +404,17 @@ function buildRewriteDropdown(types, currentPrompt, customPrompts, onSelect, onD
       item.tabIndex = -1;
       const labelEl = document.createElement("div");
       labelEl.className = "tb-dd-item-label";
-      labelEl.textContent = type.label;
+      labelEl.textContent = _isKo ? (type.labelKo || type.label) : type.label;
       item.appendChild(labelEl);
       if (type.description) {
         const descEl = document.createElement("div");
         descEl.className = "tb-dd-item-desc";
-        descEl.textContent = type.description;
+        descEl.textContent = _isKo ? (type.descriptionKo || type.description) : type.description;
         item.appendChild(descEl);
       }
       item.addEventListener("mousedown", (e) => e.preventDefault());
       item.addEventListener("click", () => {
-        onSelect(type.id, type.label, type.prompt);
+        onSelect(type.id, _isKo ? (type.labelKo || type.label) : type.label, type.prompt);
         closeActiveDropdown();
       });
       list.appendChild(item);
@@ -506,7 +547,7 @@ const ExplainPopup = {
 
     const popup = document.createElement("div");
     popup.className = "tb-explain-popup";
-    popup.innerHTML = `<div class="tb-explain-loading"><span class="tb-explain-spinner"></span> Analyzing changes…</div>`;
+    popup.innerHTML = `<div class="tb-explain-loading"><span class="tb-explain-spinner"></span> ${_strings.analyzing}</div>`;
     document.body.appendChild(popup);
     this.el = popup;
     this._positionNear(popup, iconEl);
@@ -539,9 +580,9 @@ const ExplainPopup = {
       if (response?.type === "success" && response.changes?.length > 0) {
         this._render(response.changes);
       } else if (response?.type === "error" && response.message?.toLowerCase().includes("sign in")) {
-        popup.innerHTML = `<div class="tb-explain-error">Sign in required to use explanations.</div>`;
+        popup.innerHTML = `<div class="tb-explain-error">${_strings.signInRequired}</div>`;
       } else {
-        popup.innerHTML = `<div class="tb-explain-error">No explanation available for this change.</div>`;
+        popup.innerHTML = `<div class="tb-explain-error">${_strings.noExplanation}</div>`;
       }
     } catch (err) {
       if (this.el) {
@@ -740,6 +781,10 @@ const SidePanel = {
       this.state = "loading";
       this._quotaExceeded = false;
       this.currentResult = "";
+      // 빈 텍스트로 열릴 때(버블 기본 클릭 등) 이전 결과 캐시가 있으면 그 텍스트를 복원
+      if (!text && this._resultCache?.text) {
+        text = this._resultCache.text;
+      }
       this.originalText = text;
 
       this.el = document.createElement("div");
@@ -868,7 +913,7 @@ const SidePanel = {
     this.state = "error";
     const resultEl = this.el.querySelector(".tb-result");
     if (resultEl) {
-      resultEl.textContent = message || "An error occurred.";
+      resultEl.textContent = message || _strings.errorOccurred;
       resultEl.classList.add("tb-result--error");
     }
     const sp = this.el.querySelector(".tb-spinner");
@@ -891,7 +936,7 @@ const SidePanel = {
     resultEl.innerHTML = "";
     const banner = document.createElement("div");
     banner.className = "tb-login-prompt";
-    banner.textContent = "Free usage limit reached. Sign in to continue.";
+    banner.textContent = _strings.guestLimitReached;
     resultEl.appendChild(banner);
   },
 
@@ -906,7 +951,7 @@ const SidePanel = {
     resultEl.innerHTML = "";
     const banner = document.createElement("div");
     banner.className = "tb-login-prompt";
-    banner.innerHTML = `Monthly token limit reached. <button class="tb-quota-upgrade-btn">Upgrade to Basic →</button>`;
+    banner.innerHTML = `${_strings.quotaExceeded} <button class="tb-quota-upgrade-btn">${_strings.upgradeBasic}</button>`;
     resultEl.appendChild(banner);
     banner.querySelector(".tb-quota-upgrade-btn")?.addEventListener("click", () => {
       chrome.runtime.sendMessage({ type: "STRIPE_CHECKOUT", plan: "basic" }).catch(() => {});
@@ -917,8 +962,8 @@ const SidePanel = {
     const banner = this.el?.querySelector(".tb-guest-banner");
     if (!banner) return;
     banner.innerHTML = `
-      <span class="tb-guest-banner-text">${remaining} free use${remaining === 1 ? "" : "s"} remaining · Sign in for more usage</span>
-      <button class="tb-guest-signin-btn">Sign in</button>
+      <span class="tb-guest-banner-text">${_strings.guestRemaining(remaining)}</span>
+      <button class="tb-guest-signin-btn">${_strings.signIn}</button>
     `;
     banner.style.display = "";
     banner.querySelector(".tb-guest-signin-btn")?.addEventListener("click", () => {
@@ -987,21 +1032,21 @@ const SidePanel = {
       <div class="tb-header">
         <div class="tb-mode-btns">
           <button class="tb-mode-btn tb-mode-btn--active" data-mode="translate">
-            <span class="tb-mode-icon">交</span> Translate
+            <span class="tb-mode-icon">交</span> ${_strings.modeTranslate}
           </button>
           <button class="tb-mode-btn" data-mode="correct">
-            <span class="tb-mode-icon">A✓</span> Correct
+            <span class="tb-mode-icon">A✓</span> ${_strings.modeCorrect}
           </button>
         </div>
       </div>
       <div class="tb-guest-banner" style="display:none"></div>
       <div class="tb-section tb-section--top">
         <div class="tb-section-bar">
-          <button class="tb-source-lang-btn tb-lang-trigger">🌐 Auto-detect ▾</button>
+          <button class="tb-source-lang-btn tb-lang-trigger">🌐 ${_strings.autoDetect} ▾</button>
         </div>
         <div class="tb-text-box">
           <button class="tb-clear-btn" aria-label="Clear input">✕</button>
-          <textarea class="tb-original" placeholder="Selected text appears here..." maxlength="10000"></textarea>
+          <textarea class="tb-original" placeholder="${_strings.placeholder}" maxlength="10000"></textarea>
           <div class="tb-original-footer">
             <span class="tb-char-count">0 / 10,000</span>
             <div class="tb-original-actions">
@@ -1023,11 +1068,11 @@ const SidePanel = {
             <div class="tb-empty-guide">
               <div class="tb-empty-shortcut">
                 <span class="tb-kbd">${mod}</span><span class="tb-kbd">C+C</span>
-                <span class="tb-empty-desc">Double-copy selected text to load</span>
+                <span class="tb-empty-desc">${_strings.emptyDescCopy}</span>
               </div>
               <div class="tb-empty-shortcut">
                 <span class="tb-kbd">${mod}</span><span class="tb-kbd">↵</span>
-                <span class="tb-empty-desc">Apply result to original text</span>
+                <span class="tb-empty-desc">${_strings.emptyDescApply}</span>
               </div>
             </div>
           </div>
@@ -1035,7 +1080,7 @@ const SidePanel = {
       </div>
       <div class="tb-footer">
         <button class="tb-retry-btn" aria-label="Retry">↺</button>
-        <button class="tb-replace-btn" disabled>Apply <kbd>${mod}↵</kbd></button>
+        <button class="tb-replace-btn" disabled>${_strings.applyBtn} <kbd>${mod}↵</kbd></button>
       </div>
     `;
   },
@@ -1091,11 +1136,13 @@ const SidePanel = {
       const matchedByPrompt = REWRITE_TYPES.find(r => r.prompt === settings.rewritePrompt);
       const matchedById = REWRITE_TYPES.find(r => r.id === settings.rewritePrompt);
       if (matchedByPrompt || matchedById) {
-        rewriteBtn.textContent = (matchedByPrompt || matchedById).label + " ▾";
+        const m = matchedByPrompt || matchedById;
+        rewriteBtn.textContent = (_isKo ? (m.labelKo || m.label) : m.label) + " ▾";
       } else if (settings.rewritePrompt) {
         rewriteBtn.textContent = "✏️ " + _truncateLabel(settings.rewritePrompt) + " ▾";
       } else {
-        rewriteBtn.textContent = REWRITE_TYPES[0].label + " ▾";
+        const first = REWRITE_TYPES[0];
+        rewriteBtn.textContent = (_isKo ? (first.labelKo || first.label) : first.label) + " ▾";
       }
     }
 
@@ -1221,7 +1268,7 @@ const SidePanel = {
         // 삭제된 항목이 현재 선택된 프롬프트면 기본값으로 복원
         if (settings.rewritePrompt === prompt) {
           const defaultType = REWRITE_TYPES[0];
-          await onSelectRewrite(defaultType.id, defaultType.label, defaultType.prompt);
+          await onSelectRewrite(defaultType.id, _isKo ? (defaultType.labelKo || defaultType.label) : defaultType.label, defaultType.prompt);
         }
         // 드롭다운 목록 즉시 갱신
         const updatedCustoms = await getCustomRewritePrompts();
@@ -1259,7 +1306,7 @@ const SidePanel = {
         btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#30D158" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
         setTimeout(() => { if (btn.isConnected) btn.innerHTML = prev; }, 1500);
       } catch {
-        showToast("Copy failed", "error");
+        showToast(_strings.copyFailed, "error");
       }
     });
 
@@ -1294,11 +1341,11 @@ const SidePanel = {
         guide.innerHTML = `
           <div class="tb-empty-shortcut">
             <span class="tb-kbd">${mod}</span><span class="tb-kbd">C+C</span>
-            <span class="tb-empty-desc">Double-copy selected text to load</span>
+            <span class="tb-empty-desc">${_strings.emptyDescCopy}</span>
           </div>
           <div class="tb-empty-shortcut">
             <span class="tb-kbd">${mod}</span><span class="tb-kbd">↵</span>
-            <span class="tb-empty-desc">Apply result to original text</span>
+            <span class="tb-empty-desc">${_strings.emptyDescApply}</span>
           </div>
         `;
         wrap.appendChild(guide);
@@ -1459,7 +1506,7 @@ const MiniPopover = {
     this.state = "error";
     this.el.querySelector(".tb-spinner")?.remove();
     const resultEl = this.el.querySelector(".tb-pop-result");
-    if (resultEl) resultEl.textContent = message || "An error occurred.";
+    if (resultEl) resultEl.textContent = message || _strings.errorOccurred;
   },
 
   remove() {
@@ -1608,7 +1655,7 @@ async function handleReplace(newText) {
 
 function replaceSelectedTextInWeb(newText) {
   if (!lastSelectionRange) {
-    showToast("Selection lost. Please select text again.", "error");
+    showToast(_strings.selectionLost, "error");
     return;
   }
 
@@ -1626,7 +1673,7 @@ function replaceSelectedTextInWeb(newText) {
       } catch {}
     }
     if (!sel) {
-      showToast("Could not find editable area.", "error");
+      showToast(_strings.noEditable, "error");
       return;
     }
   } else {
@@ -1655,7 +1702,7 @@ function replaceSelectedTextInWeb(newText) {
     container.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
-  showToast("✅ Replaced");
+  showToast(_strings.replaced);
   lastSelectionRange = null;
 }
 
@@ -1684,7 +1731,7 @@ async function replaceSelectedTextInGoogleDocs(newText) {
         })
       );
       if (!notHandled) {
-        showToast("✅ Replaced");
+        showToast(_strings.replaced);
         return;
       }
     } catch {}
@@ -1695,14 +1742,14 @@ async function replaceSelectedTextInGoogleDocs(newText) {
     try {
       const pasted = iframe.contentDocument.execCommand("paste");
       if (pasted) {
-        showToast("✅ Replaced");
+        showToast(_strings.replaced);
         return;
       }
     } catch {}
   }
 
   // ── Final fallback: guide manual paste ──
-  showToast(`Copied! Press ${_modLabel}+V to paste.`, "error");
+  showToast(_strings.copiedPaste(_modLabel), "error");
 }
 
 // ═══════════════════════════════════════════════════════

@@ -20,6 +20,7 @@ OCR 기능 없음. 데스크탑 앱(`textBoi_desktop/`)의 API, 텍스트 정제
 | [`.claude/rules/app-flow.md`](.claude/rules/app-flow.md) | **앱 작동 플로우** — 이중 복사 트리거→스트리밍→Replace 전체 흐름, 데스크탑 대비 비교 |
 | [`.claude/rules/billing-plan.md`](.claude/rules/billing-plan.md) | **빌링·플랜·토큰 차감** — Free Plan 생성, user_history 저장, DB 트리거 차감 구조, Quota 체크, 개발 계획 Phase A~F |
 | [`.claude/rules/stripe-billing.md`](.claude/rules/stripe-billing.md) | **Stripe 구독 결제** — Basic 플랜 Checkout·Portal·갱신·해지·Quota 표시, 개발 계획 Phase 1~4 |
+| [`.claude/rules/coupon-plan.md`](.claude/rules/coupon-plan.md) | **쿠폰/프로모션 코드** — token_grant·stripe_promo 유형, DB 구조, Worker /apply-coupon 엔드포인트, 보안 규칙, 구현 체크리스트 |
 | [`.claude/skills/ref-desktop-backend.md`](.claude/skills/ref-desktop-backend.md) | **스킬** `/ref-desktop-backend` — 백엔드 디렉토리 맵, API 엔드포인트 스펙, 데이터 파일 경로 |
 | [`.claude/skills/port-from-desktop.md`](.claude/skills/port-from-desktop.md) | **스킬** `/port-from-desktop` — desktop → extension TS→JS 포팅 규칙 |
 

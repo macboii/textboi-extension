@@ -116,7 +116,7 @@
 
 #textboi-panel .tb-model-select {
   flex: 1 !important;
-  background: transparent !important;
+  background: #2C2C2E !important;
   border: none !important;
   border-radius: 0 !important;
   color: #F2F2F7 !important;
@@ -128,6 +128,13 @@
   appearance: auto !important;
   -webkit-appearance: auto !important;
   min-width: 0 !important;
+}
+/* Windows Chrome renders the native dropdown popup using the select's own
+   background/color instead of the OS-drawn overlay macOS uses — without an
+   explicit option background it defaults to white, making light text invisible. */
+#textboi-panel .tb-model-select option {
+  background: #2C2C2E !important;
+  color: #F2F2F7 !important;
 }
 #textboi-panel .tb-model-select:disabled {
   cursor: default !important;
@@ -1033,7 +1040,8 @@
   #textboi-panel .tb-close-btn:hover { background: #E5E5EA !important; color: #1C1C1E !important; }
   #textboi-panel .tb-model-row { border-bottom-color: rgba(0,0,0,0.07) !important; background: #F5F5F7 !important; }
   #textboi-panel .tb-model-selector { background: #ffffff !important; border-color: #D1D1D6 !important; }
-  #textboi-panel .tb-model-select { color: #1C1C1E !important; }
+  #textboi-panel .tb-model-select { background: #ffffff !important; color: #1C1C1E !important; }
+  #textboi-panel .tb-model-select option { background: #ffffff !important; color: #1C1C1E !important; }
   #textboi-panel .tb-lang-trigger { background: #ffffff !important; border-color: #D1D1D6 !important; color: #3A3A3C !important; }
   #textboi-panel .tb-lang-trigger:hover { background: #F0F0F5 !important; border-color: #C0C0C5 !important; color: #1C1C1E !important; }
   #textboi-panel .tb-kbd { background: #F5F5F7 !important; border-color: #C7C7CC !important; color: #3A3A3C !important; }
